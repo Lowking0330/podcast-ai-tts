@@ -5,6 +5,9 @@ import re
 import tempfile
 import time
 import numpy as np
+import json
+# 1. 新增 gTTS 用於中文合成
+from gtts import gTTS
 
 # ---------------------------------------------------------
 # 1. 資料設定與基礎函式
@@ -65,13 +68,14 @@ def split_long_text(text, max_chars=150):
 # ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="原住民族語 Podcast 生成器", layout="wide")
-st.title("臺灣原住民族語 Podcast 生成器 🎙️")
+st.set_page_config(page_title="Podcast-001: 原住民族語生成器", layout="wide")
+st.title("🎙️ Podcast-001: 原住民族語生成器")
+st.caption("版本功能：單句合成 | 雙語對話 | 長文有聲書 | 專案存檔")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = [
-        {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho! (你好!)"}, 
-        {"tribe": "太魯閣", "speaker": "太魯閣_女聲", "text": "Embiyax su hug? (你好嗎?)"}
+        {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho!", "zh": "你好!"}, 
+        {"tribe": "太魯閣", "speaker": "太魯閣_女聲", "text": "Embiyax su hug?", "zh": "你好嗎?"}
     ]
 
 # ---------------------------------------------------------
@@ -109,13 +113,43 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: Podcast 對話
+# 分頁 2: Podcast 對話 (新增：存檔 + 雙語)
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
     
-    with st.expander("⚡ 快速劇本匯入 (大量輸入專用)", expanded=False):
-        st.caption("設定好角色代號 (A, B)，直接貼上對話。")
+    # ------------------------------------------
+    # 💾 功能 3：專案存檔與讀取
+    # ------------------------------------------
+    with st.expander("💾 專案存檔與讀取 (Project Save/Load)", expanded=False):
+        c_save, c_load = st.columns(2)
+        with c_save:
+            # 匯出 JSON
+            json_str = json.dumps(st.session_state['dialogue_list'], ensure_ascii=False, indent=2)
+            st.download_button(
+                label="📥 下載目前劇本 (.json)",
+                data=json_str,
+                file_name="podcast_project.json",
+                mime="application/json"
+            )
+        with c_load:
+            # 匯入 JSON
+            uploaded_file = st.file_uploader("📤 上傳劇本檔 (.json)", type=["json"])
+            if uploaded_file is not None:
+                if st.button("確認載入專案"):
+                    try:
+                        data = json.load(uploaded_file)
+                        st.session_state['dialogue_list'] = data
+                        st.success("專案載入成功！")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"檔案格式錯誤: {e}")
+
+    # ------------------------------------------
+    # ⚡ 快速劇本匯入 (升級版：支援雙語)
+    # ------------------------------------------
+    with st.expander("⚡ 快速劇本匯入 (支援雙語)", expanded=False):
+        st.caption("格式範例： `A: Nga'ay ho! | 你好` (使用 `|` 分隔族語和中文)")
         c_role1, c_role2 = st.columns(2)
         with c_role1:
             st.markdown("**🧑‍🦰 角色 A 設定**")
@@ -126,7 +160,7 @@ with tab2:
             role_b_tribe = st.selectbox("B 族群", list(speaker_map.keys()), key="rb_t", index=1)
             role_b_spk = st.selectbox("B 語者", speaker_map[role_b_tribe], key="rb_s")
 
-        script_text = st.text_area("請貼上劇本 (格式： 'A: 內容' 或 'B: 內容')", height=150, placeholder="A: 你好\nB: 你好嗎")
+        script_text = st.text_area("請貼上劇本", height=150, placeholder="A: Nga'ay ho! | 你好\nB: Embiyax su hug? | 你好嗎")
 
         c_imp1, c_imp2 = st.columns([1, 4])
         if c_imp1.button("⚡ 解析並匯入"):
@@ -138,12 +172,27 @@ with tab2:
                 for line in lines:
                     line = line.strip()
                     if not line: continue
-                    if line.upper().startswith("A:") or line.startswith("A："):
-                        new_entries.append({"tribe": role_a_tribe, "speaker": role_a_spk, "text": line[2:].strip()})
-                    elif line.upper().startswith("B:") or line.startswith("B："):
-                        new_entries.append({"tribe": role_b_tribe, "speaker": role_b_spk, "text": line[2:].strip()})
+                    
+                    # 解析族語與中文
+                    parts = line.split('|')
+                    raw_text = parts[0].strip()
+                    zh_text = parts[1].strip() if len(parts) > 1 else ""
+                    
+                    current_entry = {"tribe": role_a_tribe, "speaker": role_a_spk, "text": "", "zh": zh_text}
+                    
+                    if raw_text.upper().startswith("A:") or raw_text.startswith("A："):
+                        current_entry["text"] = raw_text[2:].strip()
+                        current_entry["tribe"] = role_a_tribe
+                        current_entry["speaker"] = role_a_spk
+                    elif raw_text.upper().startswith("B:") or raw_text.startswith("B："):
+                        current_entry["text"] = raw_text[2:].strip()
+                        current_entry["tribe"] = role_b_tribe
+                        current_entry["speaker"] = role_b_spk
                     else:
-                        new_entries.append({"tribe": role_a_tribe, "speaker": role_a_spk, "text": line})
+                        current_entry["text"] = raw_text
+                    
+                    new_entries.append(current_entry)
+                    
                 st.session_state['dialogue_list'].extend(new_entries)
                 st.success(f"成功匯入 {len(new_entries)} 句！")
                 st.rerun()
@@ -152,42 +201,59 @@ with tab2:
             st.rerun()
 
     st.markdown("---")
+    
+    # BGM 與 雙語模式設定
+    c_set1, c_set2 = st.columns(2)
+    with c_set1:
+        with st.expander("🎵 背景音樂 (BGM)", expanded=True):
+            bgm_file_d = st.file_uploader("上傳背景音樂", type=["mp3", "wav"], key="bgm_d")
+            bgm_vol_d = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_d")
+    with c_set2:
+        with st.expander("🗣️ 雙語教學模式 (Bilingual)", expanded=True):
+            enable_bilingual = st.checkbox("啟用雙語朗讀 (族語 + 中文)", value=True, help="合成時會先唸族語，再唸中文翻譯")
+            bilingual_gap = st.slider("翻譯間隔 (秒)", 0.0, 2.0, 0.5, 0.1)
 
-    with st.expander("🎵 背景音樂設定", expanded=False):
-        c_b1, c_b2 = st.columns([3, 1])
-        with c_b1: bgm_file_d = st.file_uploader("上傳背景音樂", type=["mp3", "wav"], key="bgm_d")
-        with c_b2: bgm_vol_d = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_d")
-
+    # 列表編輯區 (新增中文欄位)
+    st.markdown("##### 📝 腳本列表")
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container():
-            col_idx, col_tribe, col_spk, col_text, col_del = st.columns([0.5, 2, 3, 6, 0.5])
+            # 調整欄位比例，增加中文欄位
+            col_idx, col_set, col_text, col_zh, col_del = st.columns([0.5, 2.5, 3.5, 3, 0.5])
             col_idx.write(f"#{i+1}")
-            try: idx_tr = list(speaker_map.keys()).index(line['tribe'])
-            except: idx_tr = 0
-            new_tribe = col_tribe.selectbox("族群", list(speaker_map.keys()), key=f"d_tr_{i}", index=idx_tr, label_visibility="collapsed")
-            avail_spks = speaker_map[new_tribe]
-            try: idx_sp = avail_spks.index(line['speaker'])
-            except: idx_sp = 0
-            new_speaker = col_spk.selectbox("語者", avail_spks, key=f"d_sp_{i}", index=idx_sp, label_visibility="collapsed")
-            new_text = col_text.text_input("台詞", value=line['text'], key=f"d_tx_{i}", label_visibility="collapsed")
+            
+            with col_set:
+                try: idx_tr = list(speaker_map.keys()).index(line['tribe'])
+                except: idx_tr = 0
+                new_tribe = st.selectbox("族群", list(speaker_map.keys()), key=f"d_tr_{i}", index=idx_tr, label_visibility="collapsed")
+                
+                avail_spks = speaker_map[new_tribe]
+                try: idx_sp = avail_spks.index(line['speaker'])
+                except: idx_sp = 0
+                new_speaker = st.selectbox("語者", avail_spks, key=f"d_sp_{i}", index=idx_sp, label_visibility="collapsed")
+            
+            new_text = col_text.text_input("族語", value=line['text'], key=f"d_tx_{i}", label_visibility="collapsed", placeholder="族語台詞")
+            # 確保有 zh 欄位 (舊專案可能沒有)
+            curr_zh = line.get('zh', '')
+            new_zh = col_zh.text_input("中文翻譯", value=curr_zh, key=f"d_zh_{i}", label_visibility="collapsed", placeholder="中文翻譯")
+            
             if col_del.button("❌", key=f"d_dl_{i}"):
                 st.session_state['dialogue_list'].pop(i)
                 st.rerun()
-            st.session_state['dialogue_list'][i].update({'tribe': new_tribe, 'speaker': new_speaker, 'text': new_text})
+            
+            st.session_state['dialogue_list'][i].update({'tribe': new_tribe, 'speaker': new_speaker, 'text': new_text, 'zh': new_zh})
 
     c_add, c_run = st.columns([1, 4])
-    if c_add.button("➕ 手動新增"):
-        last = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": ""}
+    if c_add.button("➕ 新增"):
+        last = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "", "zh": ""}
         st.session_state['dialogue_list'].append(last.copy())
         st.rerun()
 
-    if c_run.button("🎙️ 開始合成 Podcast", type="primary"):
+    if c_run.button("🎙️ 開始合成 Podcast-001", type="primary"):
         dialogue = st.session_state['dialogue_list']
         if not dialogue:
             st.warning("腳本是空的！")
         else:
             try:
-                # 延後匯入 MoviePy
                 from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
                 
                 progress_bar = st.progress(0)
@@ -195,32 +261,49 @@ with tab2:
                 audio_clips = []
                 
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
+                
                 for idx, item in enumerate(dialogue):
                     txt = clean_text(item['text'])
+                    zh_txt = clean_text(item.get('zh', ''))
                     spk = item['speaker']
                     trb = item['tribe']
+                    
                     if not txt: continue 
                     
-                    status_text.text(f"正在合成第 {idx+1}/{len(dialogue)} 句...")
+                    # 1. 合成族語
+                    status_text.text(f"合成 #{idx+1} [族語]: {txt[:10]}...")
                     bypass_client_validation(client, spk)
                     try: client.predict(ethnicity=trb, api_name="/lambda")
                     except: pass
-                    
                     audio_path = client.predict(ref=spk, gen_text_input=txt, api_name="/default_speaker_tts")
                     
-                    clip = AudioFileClip(audio_path)
-                    audio_clips.append(clip)
+                    clip_indigenous = AudioFileClip(audio_path)
+                    audio_clips.append(clip_indigenous)
                     
-                    # 1 秒靜音
-                    ch = clip.nchannels 
-                    silence_array = np.zeros((int(44100 * 1.0), ch))
-                    silence = AudioArrayClip(silence_array, fps=44100)
-                    audio_clips.append(silence)
+                    # 2. 功能 4：合成中文 (如果有啟用且有文字)
+                    if enable_bilingual and zh_txt:
+                        status_text.text(f"合成 #{idx+1} [中文]: {zh_txt[:10]}...")
+                        # 加一點小間隔
+                        silence_gap = AudioArrayClip(np.zeros((int(44100 * bilingual_gap), 2)), fps=44100)
+                        audio_clips.append(silence_gap)
+                        
+                        # 使用 gTTS 合成中文
+                        tts_zh = gTTS(text=zh_txt, lang='zh-tw')
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_zh:
+                            tts_zh.save(tmp_zh.name)
+                            tmp_zh_path = tmp_zh.name
+                        
+                        clip_zh = AudioFileClip(tmp_zh_path)
+                        audio_clips.append(clip_zh)
+                        
+                    # 3. 每句結束的 1 秒大間隔
+                    silence_end = AudioArrayClip(np.zeros((int(44100 * 1.0), 2)), fps=44100)
+                    audio_clips.append(silence_end)
                     
                     progress_bar.progress((idx + 1) / len(dialogue))
 
                 if audio_clips:
-                    status_text.text("接合中...")
+                    status_text.text("混音處理中...")
                     voice_track = concatenate_audioclips(audio_clips)
                     
                     final_output = voice_track
@@ -229,14 +312,10 @@ with tab2:
                             tmp_bgm.write(bgm_file_d.getvalue())
                             tmp_bgm_path = tmp_bgm.name
                         music_track = AudioFileClip(tmp_bgm_path)
-                        
                         if music_track.duration < voice_track.duration:
                             n_loops = int(voice_track.duration / music_track.duration) + 1
                             music_track = concatenate_audioclips([music_track] * n_loops)
-                        
-                        # 🔧 修正：將 .subclip 改為 .subclipped (適應 v2.0)
                         music_track = music_track.subclipped(0, voice_track.duration + 1).with_volume_scaled(bgm_vol_d)
-                        
                         final_output = CompositeAudioClip([music_track, voice_track])
                         os.remove(tmp_bgm_path)
                     
@@ -246,14 +325,13 @@ with tab2:
                     for c in audio_clips: c.close()
                     final_output.close()
                     
-                    st.success("🎉 Podcast 完成！")
+                    st.success("🎉 Podcast-001 完成！")
                     st.audio(temp_file.name, format="audio/mp3")
                     with open(temp_file.name, "rb") as f:
-                        st.download_button("📥 下載 MP3", f, "podcast_final.mp3", "audio/mp3")
+                        st.download_button("📥 下載 MP3", f, "podcast_001.mp3", "audio/mp3")
 
             except ImportError as e:
-                st.error("環境安裝錯誤。請確認 requirements.txt")
-                st.error(e)
+                st.error("環境錯誤：請確認 requirements.txt 包含 gTTS, numpy, moviepy")
             except Exception as e:
                 st.error(f"執行錯誤: {e}")
 
@@ -320,10 +398,7 @@ with tab3:
                         if mtrk.duration < voice_trk.duration:
                             nl = int(voice_trk.duration / mtrk.duration) + 1
                             mtrk = concatenate_audioclips([mtrk]*nl)
-                        
-                        # 🔧 修正：將 .subclip 改為 .subclipped (適應 v2.0)
                         mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
-                        
                         final_out = CompositeAudioClip([mtrk, voice_trk])
                         os.remove(tmppath)
 
