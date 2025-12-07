@@ -3,4 +3,6 @@ moviepy
 numpy
 edge-tts
 gTTS
+pandas
+openpyxl
 nest_asyncio
