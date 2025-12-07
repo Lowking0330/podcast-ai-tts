@@ -156,12 +156,12 @@ st.set_page_config(page_title="Podcast-008 Pro", layout="wide", initial_sidebar_
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/microphone.png", width=80)
     st.title("原語 Podcast")
-    st.markdown("### 🇹🇼 臺灣原住民族語生成器")
+    st.markdown("### 原住民族語Podcast生成器")
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
 
-st.title("🎙️ Podcast 內容生產中心")
-st.caption("版本: Podcast-008 Pro | 功能：Excel 存取、一鍵範例、雙語男聲")
+st.title("🎙️ 原住民族語Podcast生成器")
+st.caption("版本: Podcast Pro | 功能：Excel 存取、一鍵範例、跨族合成")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = []
@@ -171,21 +171,21 @@ if 'dialogue_list' not in st.session_state:
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "💬 單句合成", 
-    "🎧 Podcast (全族語)", 
+    "🎧 Podcast (族語)", 
     "🏫 Podcast (雙語教學)", 
-    "📖 長文有聲書"
+    "📖 長篇有聲書"
 ])
 
 # ==========================================
 # 分頁 1: 單句合成 (含範例)
 # ==========================================
 with tab1:
-    st.markdown("### 💬 單句語音測試")
+    st.markdown("### 💬 單句語音合成")
     
     if st.button("✨ 載入範例 (海岸阿美)", key="ex_single", help="快速填入阿美族問候語"):
         st.session_state['s1_tribe_idx'] = 0 
         st.session_state['s1_speaker_idx'] = 0 
-        st.session_state['s1_text_val'] = "Nga'ay ho! Kicey kiso haw?" 
+        st.session_state['s1_text_val'] = "Nga'ay ho!" 
         st.rerun()
 
     def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
@@ -219,9 +219,10 @@ def render_script_editor(key_prefix):
     # --- 範例按鈕 ---
     if st.button("✨ 載入範例劇本 (海岸阿美)", key=f"{key_prefix}_ex", use_container_width=True):
         st.session_state['dialogue_list'] = [
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho!", "zh": "你好！"},
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Kicey kiso haw?", "zh": "你吃飯了嗎？"},
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Hay, kicey to kaku.", "zh": "是的，我吃飽了。"},
+            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho.", "zh": "你好。"},
+            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"},
+            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Hai, maolah misa'osi kako.", "zh": "對，我很喜歡讀書。
+"},
             {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Aray!", "zh": "謝謝！"}
         ]
         st.rerun()
