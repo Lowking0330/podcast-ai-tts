@@ -103,7 +103,7 @@ def synthesize_indigenous_speech(tribe, speaker, text):
     return path
 
 # ---------------------------------------------------------
-# Excel/Txt 處理函式
+# Excel/Txt 處理函式 (預設值修正)
 # ---------------------------------------------------------
 def convert_df_to_excel(dialogue_list):
     df = pd.DataFrame(dialogue_list)
@@ -124,11 +124,15 @@ def parse_uploaded_file(uploaded_file):
     try:
         filename = uploaded_file.name
         new_data = []
+        # 設定讀取失敗時的預設值為 秀姑巒阿美
+        default_tribe = '阿美'
+        default_speaker = '阿美_秀姑巒_女聲1'
+
         if filename.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file)
             for _, row in df.iterrows():
-                tribe = row.get('族群') or row.get('tribe') or '阿美'
-                speaker = row.get('語者') or row.get('speaker') or '阿美_海岸_男聲'
+                tribe = row.get('族群') or row.get('tribe') or default_tribe
+                speaker = row.get('語者') or row.get('speaker') or default_speaker
                 text = row.get('族語內容') or row.get('text') or ''
                 zh = row.get('中文翻譯') or row.get('zh') or ''
                 if pd.notna(text) and str(text).strip():
@@ -145,7 +149,7 @@ def parse_uploaded_file(uploaded_file):
                 raw = parts[0].strip()
                 zh = parts[1].strip() if len(parts) > 1 else ""
                 new_data.append({
-                    'tribe': '阿美', 'speaker': '阿美_海岸_男聲',
+                    'tribe': default_tribe, 'speaker': default_speaker,
                     'text': raw, 'zh': zh
                 })
         return new_data
@@ -156,7 +160,7 @@ def parse_uploaded_file(uploaded_file):
 # ---------------------------------------------------------
 # 2. 介面初始化 (側邊欄大更新)
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-012 Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Podcast-013 Pro", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/microphone.png", width=80)
@@ -185,12 +189,13 @@ with st.sidebar:
         
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-012 | 核心: Free Tier")
+    st.caption("版本: Podcast-013 | 核心: Free Tier")
 
-# 主標題
-st.title("🎙️ Podcast 內容生產中心")
+# 主標題 (依需求修正)
+st.title("🎙️ 族語Podcast內容產製程式")
 st.markdown("打造您的專屬原住民族語廣播節目，支援 **16族42語**、**雙語教學** 與 **背景混音**。")
 
+# 預設對話列表 (預設改為秀姑巒)
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = []
 
@@ -211,12 +216,13 @@ with tab1:
     st.markdown("### 💬 單句語音測試")
     st.caption("適合快速確認發音與語調。")
     
-    if st.button("✨ 載入範例 (海岸阿美)", key="ex_single", help="快速填入阿美族問候語"):
-        st.session_state['s1_tribe_idx'] = 0 
-        st.session_state['s1_speaker_idx'] = 0 
+    if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single", help="快速填入阿美族問候語"):
+        st.session_state['s1_tribe_idx'] = 0 # 阿美
+        st.session_state['s1_speaker_idx'] = 4 # 秀姑巒女聲1 (Index 4)
         st.session_state['s1_text_val'] = "Nga'ay ho! Kicey kiso haw?" 
         st.rerun()
 
+    # 預設值調整
     def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
     
     with st.container(border=True):
@@ -225,8 +231,17 @@ with tab1:
             s_tribe = st.selectbox("選擇族群", list(speaker_map.keys()), key="s1_tribe", index=def_tribe_idx)
         with c2:
             avail_spks = speaker_map[s_tribe]
-            def_spk_idx = st.session_state.get('s1_speaker_idx', 0)
+            # 預設抓 session state，如果沒有，且是阿美族，預設抓 index 4 (秀姑巒)
+            if 's1_speaker_idx' in st.session_state:
+                def_spk_idx = st.session_state['s1_speaker_idx']
+            elif s_tribe == '阿美':
+                def_spk_idx = 4 # 預設秀姑巒
+            else:
+                def_spk_idx = 0
+            
+            # 防呆：如果切換族群導致 index 超出範圍
             if def_spk_idx >= len(avail_spks): def_spk_idx = 0
+            
             s_speaker = st.selectbox("選擇語者", avail_spks, key="s1_speaker", index=def_spk_idx)
         
         def_text = st.session_state.get('s1_text_val', "")
@@ -245,15 +260,13 @@ with tab1:
 # 共用函式：Podcast 列表編輯器
 # ==========================================
 def render_script_editor(key_prefix):
-    # -------------------------------------------------
-    # 🔧 修正：更新後的範例劇本 (讀書對話)
-    # -------------------------------------------------
-    if st.button("✨ 載入範例劇本 (海岸阿美)", key=f"{key_prefix}_ex", use_container_width=True):
+    # 範例按鈕 (修正為秀姑巒語者)
+    if st.button("✨ 載入範例劇本 (秀姑巒阿美)", key=f"{key_prefix}_ex", use_container_width=True):
         st.session_state['dialogue_list'] = [
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho.", "zh": "你好。"},
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"},
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Hai, maolah misa'osi kako.", "zh": "對，我很喜歡讀書。"},
-            {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Aray!", "zh": "謝謝！"}
+            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
+            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"},
+            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Hai, maolah misa'osi kako.", "zh": "對，我很喜歡讀書。"},
+            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Aray!", "zh": "謝謝！"}
         ]
         st.rerun()
 
@@ -287,12 +300,17 @@ def render_script_editor(key_prefix):
     with st.expander("⚡ 快速劇本貼上", expanded=False):
         st.caption("格式：`A: 族語 | 中文`")
         c_r1, c_r2 = st.columns(2)
+        # 預設值修正：秀姑巒女聲1 (Index 4)
         with c_r1:
             role_a_t = st.selectbox("A 族群", list(speaker_map.keys()), key=f"{key_prefix}_ra_t", index=0)
-            role_a_s = st.selectbox("A 語者", speaker_map[role_a_t], key=f"{key_prefix}_ra_s")
+            avail_a = speaker_map[role_a_t]
+            def_idx_a = 4 if role_a_t == '阿美' and len(avail_a) > 4 else 0
+            role_a_s = st.selectbox("A 語者", avail_a, key=f"{key_prefix}_ra_s", index=def_idx_a)
         with c_r2:
             role_b_t = st.selectbox("B 族群", list(speaker_map.keys()), key=f"{key_prefix}_rb_t", index=0)
-            role_b_s = st.selectbox("B 語者", speaker_map[role_b_t], key=f"{key_prefix}_rb_s")
+            avail_b = speaker_map[role_b_t]
+            def_idx_b = 4 if role_b_t == '阿美' and len(avail_b) > 4 else 0
+            role_b_s = st.selectbox("B 語者", avail_b, key=f"{key_prefix}_rb_s", index=def_idx_b)
 
         script_in = st.text_area("貼上劇本", height=100, key=f"{key_prefix}_txt")
         
@@ -347,7 +365,8 @@ def render_script_editor(key_prefix):
 
     c_add, c_clr = st.columns([4, 1])
     if c_add.button("➕ 新增一行", key=f"{key_prefix}_add", use_container_width=True):
-        last = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "", "zh": ""}
+        # 預設新增也是秀姑巒
+        last = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "", "zh": ""}
         st.session_state['dialogue_list'].append(last.copy())
         st.rerun()
     if c_clr.button("🗑️ 清空", key=f"{key_prefix}_clr"):
@@ -515,9 +534,9 @@ with tab3:
 with tab4:
     st.markdown("### 📖 長文有聲書製作")
     
-    if st.button("✨ 載入範例文章 (海岸阿美)", key="ex_long", use_container_width=True):
+    if st.button("✨ 載入範例文章 (秀姑巒阿美)", key="ex_long", use_container_width=True):
         st.session_state['l_tribe_idx'] = 0 
-        st.session_state['l_speaker_idx'] = 0 
+        st.session_state['l_speaker_idx'] = 4 # Index 4 is Xiuguluan
         st.session_state['l_text_val'] = "O kakalayan no 'Amis a tamdaw.\nItini i Taywan, adihay ko kasasiromaroma no yincumin.\nNikaorira, saadihayay a tamdaw i, o 'Amis." 
         st.rerun()
 
@@ -528,7 +547,14 @@ with tab4:
         with c_l1: long_tribe = st.selectbox("朗讀族群", list(speaker_map.keys()), key="l_tr", index=def_l_idx)
         with c_l2: 
             avail = speaker_map[long_tribe]
-            def_l_s_idx = st.session_state.get('l_speaker_idx', 0)
+            # 預設抓 session，若無則秀姑巒 (index 4)
+            if 'l_speaker_idx' in st.session_state:
+                def_l_s_idx = st.session_state['l_speaker_idx']
+            elif long_tribe == '阿美':
+                def_l_s_idx = 4
+            else:
+                def_l_s_idx = 0
+            
             if def_l_s_idx >= len(avail): def_l_s_idx = 0
             long_speaker = st.selectbox("朗讀語者", avail, key="l_sp", index=def_l_s_idx)
             
