@@ -1,4 +1,10 @@
 import streamlit as st
+try:
+    import moviepy
+    st.warning(f"目前安裝的 MoviePy 版本是: {moviepy.__version__}")
+except:
+    st.error("找不到 MoviePy")
+import streamlit as st
 from gradio_client import Client
 # 1. 修正 Import: 加入 AudioArrayClip
 from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
