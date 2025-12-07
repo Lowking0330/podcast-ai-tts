@@ -1,14 +1,13 @@
 import streamlit as st
 from gradio_client import Client
 # ---------------------------------------------------------
-# 🔧 關鍵修正：適應 MoviePy 2.0+ 的寫法
-# 不再從 .editor 匯入，而是直接從 moviepy 匯入
+# 🔧 修改：延後匯入 MoviePy，避免啟動時崩潰
 # ---------------------------------------------------------
-from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
 import os
 import re
 import tempfile
 import time
+# 這裡我們只匯入 numpy，moviepy 等到要用時再匯入
 import numpy as np
 
 # ---------------------------------------------------------
@@ -114,7 +113,7 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: Podcast 對話 (適應新版 MoviePy)
+# 分頁 2: Podcast 對話
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
@@ -191,11 +190,16 @@ with tab2:
         if not dialogue:
             st.warning("腳本是空的！")
         else:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            audio_clips = []
-            
             try:
+                # ----------------------------------------------------
+                # 💡 在這裡才匯入 MoviePy，避免啟動時報錯
+                # ----------------------------------------------------
+                from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                audio_clips = []
+                
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 for idx, item in enumerate(dialogue):
                     txt = clean_text(item['text'])
@@ -213,8 +217,7 @@ with tab2:
                     clip = AudioFileClip(audio_path)
                     audio_clips.append(clip)
                     
-                    # 💡 修正後的核心：適應 MoviePy 2.0 的 AudioArrayClip 參數
-                    # 2.0 版本要求：AudioArrayClip(array, fps=44100)
+                    # 1 秒靜音 (MoviePy 2.1.2 寫法)
                     ch = clip.nchannels 
                     silence_array = np.zeros((int(44100 * 1.0), ch))
                     silence = AudioArrayClip(silence_array, fps=44100)
@@ -232,15 +235,10 @@ with tab2:
                             tmp_bgm.write(bgm_file_d.getvalue())
                             tmp_bgm_path = tmp_bgm.name
                         music_track = AudioFileClip(tmp_bgm_path)
-                        # BGM 處理
                         if music_track.duration < voice_track.duration:
                             n_loops = int(voice_track.duration / music_track.duration) + 1
                             music_track = concatenate_audioclips([music_track] * n_loops)
-                        music_track = music_track.subclip(0, voice_track.duration + 1)
-                        # MoviePy 2.0 可能更改了 volumex，建議用 multiply_volume 或直接乘法
-                        # 這裡使用最通用的方法
-                        music_track = music_track.with_volume_scaled(bgm_vol_d)
-                        
+                        music_track = music_track.subclip(0, voice_track.duration + 1).with_volume_scaled(bgm_vol_d)
                         final_output = CompositeAudioClip([music_track, voice_track])
                         os.remove(tmp_bgm_path)
                     
@@ -255,11 +253,14 @@ with tab2:
                     with open(temp_file.name, "rb") as f:
                         st.download_button("📥 下載 MP3", f, "podcast_final.mp3", "audio/mp3")
 
+            except ImportError as e:
+                st.error("環境安裝錯誤：找不到 MoviePy 或 Numpy。請確認 requirements.txt")
+                st.error(e)
             except Exception as e:
-                st.error(f"錯誤: {e}")
+                st.error(f"執行錯誤: {e}")
 
 # ==========================================
-# 分頁 3: 長文有聲書 (適應新版 MoviePy)
+# 分頁 3: 長文有聲書
 # ==========================================
 with tab3:
     st.subheader("長文有聲書製作")
@@ -286,6 +287,11 @@ with tab3:
             clips_l = []
             
             try:
+                # ----------------------------------------------------
+                # 💡 在這裡才匯入 MoviePy
+                # ----------------------------------------------------
+                from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
+
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 try: client.predict(ethnicity=long_tribe, api_name="/lambda")
                 except: pass
@@ -298,7 +304,7 @@ with tab3:
                     clip = AudioFileClip(path)
                     clips_l.append(clip)
                     
-                    # 加入 1 秒靜音
+                    # 1 秒靜音
                     ch = clip.nchannels 
                     silence_array = np.zeros((int(44100 * 1.0), ch))
                     silence = AudioArrayClip(silence_array, fps=44100)
@@ -335,5 +341,8 @@ with tab3:
                     with open(tmpf.name, "rb") as f:
                         st.download_button("📥 下載有聲書", f, "audiobook_final.mp3", "audio/mp3")
 
+            except ImportError as e:
+                st.error("環境安裝錯誤：找不到 MoviePy 或 Numpy。請確認 requirements.txt")
+                st.error(e)
             except Exception as e:
                 st.error(f"錯誤: {e}")
