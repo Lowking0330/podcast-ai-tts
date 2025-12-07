@@ -10,7 +10,6 @@ import json
 import subprocess
 import sys
 from gtts import gTTS
-# 1. 新增 pandas 用於處理 Excel
 import pandas as pd
 import io
 
@@ -38,7 +37,6 @@ speaker_map = {
 
 def clean_text(text):
     if not text: return ""
-    # 保留 ' (阿美語), 轉半形標點
     text = text.replace("，", ",").replace("。", ".").replace("？", "?").replace("！", "!")
     text = text.replace("：", ":").replace("；", ";").replace("（", "(").replace("）", ")")
     text = text.replace("―", " ").replace("—", " ").replace("…", " ")
@@ -100,11 +98,10 @@ def synthesize_indigenous_speech(tribe, speaker, text):
     return path
 
 # ---------------------------------------------------------
-# 🔧 新增：Excel/Txt 處理函式
+# Excel/Txt 處理函式
 # ---------------------------------------------------------
 def convert_df_to_excel(dialogue_list):
     df = pd.DataFrame(dialogue_list)
-    # 重新命名欄位以符合直覺
     df = df.rename(columns={'tribe': '族群', 'speaker': '語者', 'text': '族語內容', 'zh': '中文翻譯'})
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -122,25 +119,18 @@ def parse_uploaded_file(uploaded_file):
     try:
         filename = uploaded_file.name
         new_data = []
-        
         if filename.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file)
-            # 兼容性處理：允許使用者上傳不同欄位名稱
             for _, row in df.iterrows():
-                # 嘗試抓取各種可能的欄位名
                 tribe = row.get('族群') or row.get('tribe') or '阿美'
                 speaker = row.get('語者') or row.get('speaker') or '阿美_海岸_男聲'
                 text = row.get('族語內容') or row.get('text') or ''
                 zh = row.get('中文翻譯') or row.get('zh') or ''
-                
                 if pd.notna(text) and str(text).strip():
                     new_data.append({
-                        'tribe': str(tribe),
-                        'speaker': str(speaker),
-                        'text': str(text),
-                        'zh': str(zh) if pd.notna(zh) else ""
+                        'tribe': str(tribe), 'speaker': str(speaker),
+                        'text': str(text), 'zh': str(zh) if pd.notna(zh) else ""
                     })
-                    
         elif filename.endswith('.txt'):
             stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
             for line in stringio:
@@ -149,15 +139,10 @@ def parse_uploaded_file(uploaded_file):
                 parts = line.split('|')
                 raw = parts[0].strip()
                 zh = parts[1].strip() if len(parts) > 1 else ""
-                # TXT 比較陽春，預設給阿美族 (因為 TXT 通常不包含 metadata)
-                # 使用者匯入後可以再用「快速設定」修改
                 new_data.append({
-                    'tribe': '阿美',
-                    'speaker': '阿美_海岸_男聲',
-                    'text': raw,
-                    'zh': zh
+                    'tribe': '阿美', 'speaker': '阿美_海岸_男聲',
+                    'text': raw, 'zh': zh
                 })
-        
         return new_data
     except Exception as e:
         st.error(f"檔案解析失敗: {e}")
@@ -176,7 +161,7 @@ with st.sidebar:
     st.success("✅ 系統狀態：正常")
 
 st.title("🎙️ Podcast 內容生產中心")
-st.caption("版本: Podcast-008 | 功能：Excel 存取、一鍵範例、雙語男聲")
+st.caption("版本: Podcast-008 Pro | 功能：Excel 存取、一鍵範例、雙語男聲")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = []
@@ -197,15 +182,13 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.markdown("### 💬 單句語音測試")
     
-    # --- 單句範例按鈕 ---
     if st.button("✨ 載入範例 (海岸阿美)", key="ex_single", help="快速填入阿美族問候語"):
-        st.session_state['s1_tribe_idx'] = 0 # 阿美
-        st.session_state['s1_speaker_idx'] = 0 # 海岸男聲
-        st.session_state['s1_text_val'] = "Nga'ay ho! Kicey kiso haw?" # 你好！你吃飯了嗎？
+        st.session_state['s1_tribe_idx'] = 0 
+        st.session_state['s1_speaker_idx'] = 0 
+        st.session_state['s1_text_val'] = "Nga'ay ho! Kicey kiso haw?" 
         st.rerun()
 
-    # 確保 session state 有值
-    def_tribe_idx = st.session_state.get('s1_tribe_idx', 0) # 預設阿美(index 0)
+    def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
     
     with st.container(border=True):
         c1, c2 = st.columns(2)
@@ -230,7 +213,7 @@ with tab1:
                 except Exception as e: st.error(f"錯誤: {e}")
 
 # ==========================================
-# 共用函式：Podcast 列表編輯器 (Excel版)
+# 共用函式：Podcast 列表編輯器 (修復 Duplicate ID)
 # ==========================================
 def render_script_editor(key_prefix):
     # --- 範例按鈕 ---
@@ -243,18 +226,21 @@ def render_script_editor(key_prefix):
         ]
         st.rerun()
 
-    # --- 存檔工具列 (Excel/Txt) ---
+    # --- 存檔工具列 ---
     with st.expander("📂 專案存檔/讀取 (支援 Excel/Txt)", expanded=False):
         c_save, c_load = st.columns(2)
         with c_save:
             st.markdown("#### 匯出")
             if st.session_state['dialogue_list']:
-                # Excel 下載
+                # 🔧 修正：加上 unique key
                 excel_data = convert_df_to_excel(st.session_state['dialogue_list'])
-                st.download_button("📥 下載 Excel (.xlsx)", excel_data, "podcast_script.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                # TXT 下載
+                st.download_button("📥 下載 Excel (.xlsx)", excel_data, "podcast_script.xlsx", 
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                                   key=f"{key_prefix}_dl_excel") # 加入 Key
+                
                 txt_data = convert_list_to_txt(st.session_state['dialogue_list'])
-                st.download_button("📥 下載文字檔 (.txt)", txt_data, "podcast_script.txt", "text/plain")
+                st.download_button("📥 下載文字檔 (.txt)", txt_data, "podcast_script.txt", "text/plain",
+                                   key=f"{key_prefix}_dl_txt") # 加入 Key
             else:
                 st.info("列表為空，無法下載")
 
@@ -275,10 +261,10 @@ def render_script_editor(key_prefix):
         st.caption("設定角色後直接貼上。")
         c_r1, c_r2 = st.columns(2)
         with c_r1:
-            role_a_t = st.selectbox("A 族群", list(speaker_map.keys()), key=f"{key_prefix}_ra_t", index=0) # Index 0 is Amis
+            role_a_t = st.selectbox("A 族群", list(speaker_map.keys()), key=f"{key_prefix}_ra_t", index=0)
             role_a_s = st.selectbox("A 語者", speaker_map[role_a_t], key=f"{key_prefix}_ra_s")
         with c_r2:
-            role_b_t = st.selectbox("B 族群", list(speaker_map.keys()), key=f"{key_prefix}_rb_t", index=0) # Default Amis
+            role_b_t = st.selectbox("B 族群", list(speaker_map.keys()), key=f"{key_prefix}_rb_t", index=0)
             role_b_s = st.selectbox("B 語者", speaker_map[role_b_t], key=f"{key_prefix}_rb_s")
 
         script_in = st.text_area("貼上劇本 (A: 族語 | 中文)", height=100, key=f"{key_prefix}_txt")
@@ -440,11 +426,13 @@ with tab3:
                     zh = clean_text(item.get('zh', ''))
                     if not txt: continue
                     
+                    # 1. 族語
                     status.write(f"合成 #{idx+1} [族語]...")
                     path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
                     clip_ind = AudioFileClip(path)
                     clips.append(clip_ind)
                     
+                    # 2. 中文
                     if zh:
                         status.write(f"合成 #{idx+1} [中文]...")
                         gap = AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100)
@@ -457,10 +445,12 @@ with tab3:
                             clip_zh = AudioFileClip(tmp_zh_path)
                             clips.append(clip_zh)
                         else:
-                            st.warning(f"#{idx+1} 中文合成失敗")
+                            st.warning(f"#{idx+1} 中文合成使用備用音源")
+                            if os.path.exists(tmp_zh_path): clips.append(AudioFileClip(tmp_zh_path))
                     
                     end_gap = AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100)
                     clips.append(end_gap)
+                    
                     progress.progress((idx+1)/len(dialogue))
                 
                 if clips:
@@ -495,12 +485,10 @@ with tab3:
 with tab4:
     st.markdown("### 📖 長文有聲書製作")
     
-    # --- 範例按鈕 ---
     if st.button("✨ 載入範例文章 (海岸阿美)", key="ex_long", use_container_width=True):
-        st.session_state['l_tribe_idx'] = 0 # 阿美
-        st.session_state['l_speaker_idx'] = 0 # 海岸男聲
-        st.session_state['l_text_val'] = "Nga'ay ho! ... (此處為長文範例，為了篇幅省略，請想像這裡有一篇長文)" 
-        # 實際應用建議放 500 字左右的文章
+        st.session_state['l_tribe_idx'] = 0 
+        st.session_state['l_speaker_idx'] = 0 
+        st.session_state['l_text_val'] = "O kakalayan no 'Amis a tamdaw.\nItini i Taywan, adihay ko kasasiromaroma no yincumin.\nNikaorira, saadihayay a tamdaw i, o 'Amis." 
         st.rerun()
 
     def_l_idx = st.session_state.get('l_tribe_idx', 0)
@@ -542,6 +530,7 @@ with tab4:
                     ch = clip.nchannels 
                     silence = AudioArrayClip(np.zeros((int(44100 * 1.0), ch)), fps=44100)
                     clips_l.append(silence)
+                    
                     progress.progress((idx + 1) / len(chunks))
                 
                 if clips_l:
@@ -570,4 +559,5 @@ with tab4:
                     st.audio(tmpf.name)
                     with open(tmpf.name, "rb") as f:
                         st.download_button("📥 下載有聲書", f, "audiobook.mp3", "audio/mp3", use_container_width=True)
-            except Exception as e: st.error(f"❌ 錯誤: {e}")
+            except Exception as e:
+                st.error(f"❌ 錯誤: {e}")
