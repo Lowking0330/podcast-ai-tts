@@ -24,7 +24,40 @@ speaker_map = {
 }
 
 # ---------------------------------------------------------
-# 2. 介面設計區
+# 2. 輔助函式：暴力破解驗證清單
+# ---------------------------------------------------------
+def force_add_speaker_to_client(client_obj, new_speaker):
+    """
+    遞迴搜尋 Client 物件中的所有設定，
+    找到原本只包含 '阿美_海岸_男聲' 的清單，並強制加入新語者。
+    """
+    target_marker = '阿美_海岸_男聲' # 用這個當作特徵來找清單
+    
+    # 內部遞迴函式
+    def recursive_search(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                # 如果找到 'choices' 且裡面有阿美族，這就是我們要改的清單！
+                if k == 'choices' and isinstance(v, list) and target_marker in v:
+                    if new_speaker not in v:
+                        v.append(new_speaker)
+                        print(f"🔧 成功解鎖語者：{new_speaker}")
+                else:
+                    recursive_search(v)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                recursive_search(item)
+                
+    # 1. 搜尋 endpoints 設定
+    if hasattr(client_obj, 'endpoints'):
+        recursive_search(client_obj.endpoints)
+    
+    # 2. 搜尋 config 設定 (雙重保險)
+    if hasattr(client_obj, 'config'):
+        recursive_search(client_obj.config)
+
+# ---------------------------------------------------------
+# 3. 介面設計區
 # ---------------------------------------------------------
 st.title("臺灣原住民族語 Podcast 生成器 🎙️")
 st.markdown("支援 16 族 42 種語音合成")
@@ -32,7 +65,7 @@ st.markdown("支援 16 族 42 種語音合成")
 col1, col2 = st.columns(2)
 
 with col1:
-    selected_tribe = st.selectbox("步驟 1：選擇族群", list(speaker_map.keys()), index=15) # 預設選阿美(避免空值)
+    selected_tribe = st.selectbox("步驟 1：選擇族群", list(speaker_map.keys()), index=15)
 
 with col2:
     available_speakers = speaker_map[selected_tribe]
@@ -41,7 +74,7 @@ with col2:
 text_input = st.text_area("步驟 3：輸入要合成的文字", height=150, placeholder="請輸入族語文字...")
 
 # ---------------------------------------------------------
-# 3. 核心邏輯區 (包含錯誤修正 Hack)
+# 4. 核心邏輯區
 # ---------------------------------------------------------
 if st.button("開始生成語音", type="primary"):
     if not text_input:
@@ -50,37 +83,16 @@ if st.button("開始生成語音", type="primary"):
         try:
             with st.spinner(f"正在連線並生成 {selected_speaker} 的聲音..."):
                 
-                # A. 建立連線
+                # 初始化 Client
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 
-                # ==========================================================
-                # 🔧 關鍵修正：繞過客戶端驗證 (Client-side Validation Bypass)
-                # ==========================================================
-                # 原因：API 預設只認識阿美族，我們必須手動把「選定的語者」塞進它的白名單
-                # 找到 /default_speaker_tts 端點的設定
-                for endpoint in client.endpoints.values():
-                    if endpoint.api_name == "/default_speaker_tts":
-                        # 找到第一個參數 (ref)，它通常是一個 Dropdown
-                        for param in endpoint.parameters:
-                            if "enum" in param:
-                                # 這裡就是 API 認為合法的清單，我們強制把它擴充
-                                # 這樣 Client 就不會報錯說 "Value is not in choices"
-                                if selected_speaker not in param["enum"]:
-                                    param["enum"].append(selected_speaker)
-                # ==========================================================
+                # 🔥 執行暴力解鎖 (不依賴特定屬性名稱，只要有清單就改)
+                force_add_speaker_to_client(client, selected_speaker)
 
-                # B. (選用) 先通知 Server 切換族群
-                # 雖然我們繞過了驗證，但最好還是禮貌性呼叫一下切換族群的 API
-                # 這樣 Server 端如果有載入模型的動作才不會出錯
-                try:
-                    client.predict(ethnicity=selected_tribe, api_name="/lambda")
-                except:
-                    pass # 這一不重要，失敗也沒關係，重點是下面那行
-
-                # C. 正式生成語音
+                # 正式生成語音
                 result = client.predict(
-                    ref=selected_speaker,       # 語者 ID
-                    gen_text_input=text_input,  # 輸入文字
+                    ref=selected_speaker,       
+                    gen_text_input=text_input,  
                     api_name="/default_speaker_tts"
                 )
                 
@@ -89,5 +101,4 @@ if st.button("開始生成語音", type="primary"):
                 
         except Exception as e:
             st.error(f"生成失敗：{e}")
-            # 展開詳細錯誤資訊以便除錯
             st.expander("查看詳細錯誤日誌").write(str(e))
