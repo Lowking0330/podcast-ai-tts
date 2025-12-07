@@ -1,2 +1,2 @@
 gradio-client
-moviepy==1.0.3
+moviepy
