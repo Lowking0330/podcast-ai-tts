@@ -7,14 +7,8 @@ import tempfile
 import time
 import numpy as np
 import json
-import asyncio
-import edge_tts 
+import subprocess # 1. 引入 subprocess 用來執行系統指令
 from gtts import gTTS
-# 1. 引入救星套件
-import nest_asyncio
-
-# 2. 初始化非同步環境 (這行能解決男聲失效的問題)
-nest_asyncio.apply()
 
 # ---------------------------------------------------------
 # 1. 資料設定與基礎函式
@@ -40,7 +34,6 @@ speaker_map = {
 
 def clean_text(text):
     if not text: return ""
-    # 嚴格清洗：保留阿美語格格音 ' 
     text = text.replace("，", ",").replace("。", ".").replace("？", "?").replace("！", "!")
     text = text.replace("：", ":").replace("；", ";").replace("（", "(").replace("）", ")")
     text = text.replace("―", " ").replace("—", " ").replace("…", " ")
@@ -76,30 +69,39 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 🔧 修復後的中文語音生成 (使用 nest_asyncio)
+# 🔧 關鍵修正：改用 subprocess 執行系統指令
+# 這會繞過 Python 的執行緒衝突，是最穩定的方法
 # ---------------------------------------------------------
-async def _edge_tts_generate(text, voice, output_path):
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
-
-def generate_chinese_audio_safe(text, gender, output_path):
+def generate_chinese_audio_subprocess(text, gender, output_path):
     voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
+    
+    # 組合指令： edge-tts --text "你好" --voice zh-TW-YunJheNeural --write-media output.mp3
+    command = [
+        "edge-tts",
+        "--text", text,
+        "--voice", voice,
+        "--write-media", output_path
+    ]
+    
     try:
-        # 直接使用 asyncio.run，因為 nest_asyncio 已經解決了衝突
-        asyncio.run(_edge_tts_generate(text, voice, output_path))
-        return True # 成功
-    except Exception as e:
-        print(f"Edge-TTS Failed: {e}")
+        # 執行系統指令，並等待完成
+        subprocess.run(command, check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Edge-TTS CLI Failed: {e}")
         # 降級至 gTTS
         try:
             tts = gTTS(text=text, lang='zh-tw')
             tts.save(output_path)
-            return False # 使用了備用方案
+            return True
         except:
             return False
+    except Exception as e:
+        print(f"Unknown Error: {e}")
+        return False
 
 # ---------------------------------------------------------
-# 🔧 穩定的族語合成邏輯 (加長等待時間)
+# 🔧 穩定的族語合成邏輯
 # ---------------------------------------------------------
 def synthesize_indigenous_speech(tribe, speaker, text):
     # 建立新連線
@@ -109,7 +111,7 @@ def synthesize_indigenous_speech(tribe, speaker, text):
     # 切換族群
     client.predict(ethnicity=tribe, api_name="/lambda")
     
-    # ⏳ 強制等待 2 秒，確保 Server 模型載入完畢 (解決聲音跑掉的關鍵)
+    # 強制等待 2 秒
     time.sleep(2.0)
     
     # 合成
@@ -119,9 +121,9 @@ def synthesize_indigenous_speech(tribe, speaker, text):
 # ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-005: 原住民族語生成器", layout="wide")
-st.title("🎙️ Podcast-005: 原住民族語生成器")
-st.caption("版本功能：修復中文男聲 | 穩定族語模型 | 雙語對話 | 長文有聲書 | 專案存檔")
+st.set_page_config(page_title="Podcast-006: 原住民族語生成器", layout="wide")
+st.title("🎙️ Podcast-006: 原住民族語生成器")
+st.caption("版本功能：系統級中文合成 (修復男聲) | 穩定族語模型 | 專案存檔")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = [
@@ -283,6 +285,7 @@ with tab2:
                     clip = AudioFileClip(path)
                     clips.append(clip)
                     
+                    # 1秒間隔
                     silence = AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100)
                     clips.append(silence)
                     progress.progress((idx+1)/len(dialogue))
@@ -344,30 +347,30 @@ with tab3:
                     zh = clean_text(item.get('zh', ''))
                     if not txt: continue
                     
-                    # 1. 族語
+                    # 1. 族語 (使用穩定版)
                     status.text(f"合成 #{idx+1} [族語] {item['tribe']}...")
                     path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
                     clip_ind = AudioFileClip(path)
                     clips.append(clip_ind)
                     
-                    # 2. 中文
+                    # 2. 中文 (如果有)
                     if zh:
                         status.text(f"合成 #{idx+1} [中文] ({zh_gender_val})...")
                         gap = AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100)
                         clips.append(gap)
                         
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
-                        # 使用安全版合成
-                        success = generate_chinese_audio_safe(zh, zh_gender_val, tmp_zh_path)
+                        
+                        # 🔧 呼叫新的 subprocess 函式
+                        success = generate_chinese_audio_subprocess(zh, zh_gender_val, tmp_zh_path)
                         
                         if success and os.path.exists(tmp_zh_path):
                             clip_zh = AudioFileClip(tmp_zh_path)
                             clips.append(clip_zh)
                         else:
-                            st.warning(f"#{idx+1} 中文合成使用備用音源 (可能為女聲)")
-                            if os.path.exists(tmp_zh_path): # 備用音源
-                                clips.append(AudioFileClip(tmp_zh_path))
+                            st.warning(f"#{idx+1} 中文合成失敗")
                     
+                    # 句尾大間隔
                     end_gap = AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100)
                     clips.append(end_gap)
                     
