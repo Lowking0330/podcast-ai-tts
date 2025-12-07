@@ -1,13 +1,10 @@
 import streamlit as st
-try:
-    import moviepy
-    st.warning(f"目前安裝的 MoviePy 版本是: {moviepy.__version__}")
-except:
-    st.error("找不到 MoviePy")
-import streamlit as st
 from gradio_client import Client
-# 1. 修正 Import: 加入 AudioArrayClip
-from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
+# ---------------------------------------------------------
+# 🔧 關鍵修正：適應 MoviePy 2.0+ 的寫法
+# 不再從 .editor 匯入，而是直接從 moviepy 匯入
+# ---------------------------------------------------------
+from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
 import os
 import re
 import tempfile
@@ -117,13 +114,13 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: Podcast 對話 (修復靜音問題)
+# 分頁 2: Podcast 對話 (適應新版 MoviePy)
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
     
     with st.expander("⚡ 快速劇本匯入 (大量輸入專用)", expanded=False):
-        st.caption("設定好角色代號 (A, B)，直接貼上對話，省去一筆一筆選擇的時間。")
+        st.caption("設定好角色代號 (A, B)，直接貼上對話。")
         c_role1, c_role2 = st.columns(2)
         with c_role1:
             st.markdown("**🧑‍🦰 角色 A 設定**")
@@ -216,9 +213,9 @@ with tab2:
                     clip = AudioFileClip(audio_path)
                     audio_clips.append(clip)
                     
-                    # 💡 修正後的核心：更安全的靜音產生方式
+                    # 💡 修正後的核心：適應 MoviePy 2.0 的 AudioArrayClip 參數
+                    # 2.0 版本要求：AudioArrayClip(array, fps=44100)
                     ch = clip.nchannels 
-                    # 建立 1 秒鐘的 0 數據陣列
                     silence_array = np.zeros((int(44100 * 1.0), ch))
                     silence = AudioArrayClip(silence_array, fps=44100)
                     audio_clips.append(silence)
@@ -235,10 +232,15 @@ with tab2:
                             tmp_bgm.write(bgm_file_d.getvalue())
                             tmp_bgm_path = tmp_bgm.name
                         music_track = AudioFileClip(tmp_bgm_path)
+                        # BGM 處理
                         if music_track.duration < voice_track.duration:
                             n_loops = int(voice_track.duration / music_track.duration) + 1
                             music_track = concatenate_audioclips([music_track] * n_loops)
-                        music_track = music_track.subclip(0, voice_track.duration + 1).volumex(bgm_vol_d)
+                        music_track = music_track.subclip(0, voice_track.duration + 1)
+                        # MoviePy 2.0 可能更改了 volumex，建議用 multiply_volume 或直接乘法
+                        # 這裡使用最通用的方法
+                        music_track = music_track.with_volume_scaled(bgm_vol_d)
+                        
                         final_output = CompositeAudioClip([music_track, voice_track])
                         os.remove(tmp_bgm_path)
                     
@@ -257,7 +259,7 @@ with tab2:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 3: 長文有聲書 (修復靜音問題)
+# 分頁 3: 長文有聲書 (適應新版 MoviePy)
 # ==========================================
 with tab3:
     st.subheader("長文有聲書製作")
@@ -296,7 +298,7 @@ with tab3:
                     clip = AudioFileClip(path)
                     clips_l.append(clip)
                     
-                    # 💡 修正後的核心：更安全的靜音產生方式
+                    # 加入 1 秒靜音
                     ch = clip.nchannels 
                     silence_array = np.zeros((int(44100 * 1.0), ch))
                     silence = AudioArrayClip(silence_array, fps=44100)
@@ -318,7 +320,7 @@ with tab3:
                         if mtrk.duration < voice_trk.duration:
                             nl = int(voice_trk.duration / mtrk.duration) + 1
                             mtrk = concatenate_audioclips([mtrk]*nl)
-                        mtrk = mtrk.subclip(0, voice_trk.duration + 1).volumex(bgm_vol_l)
+                        mtrk = mtrk.subclip(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
                         final_out = CompositeAudioClip([mtrk, voice_trk])
                         os.remove(tmppath)
 
