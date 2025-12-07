@@ -1,2 +1,3 @@
 gradio-client
 moviepy
+numpy
