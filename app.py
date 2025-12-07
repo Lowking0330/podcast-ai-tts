@@ -1,13 +1,9 @@
 import streamlit as st
 from gradio_client import Client
-# ---------------------------------------------------------
-# 🔧 修改：延後匯入 MoviePy，避免啟動時崩潰
-# ---------------------------------------------------------
 import os
 import re
 import tempfile
 import time
-# 這裡我們只匯入 numpy，moviepy 等到要用時再匯入
 import numpy as np
 
 # ---------------------------------------------------------
@@ -191,9 +187,7 @@ with tab2:
             st.warning("腳本是空的！")
         else:
             try:
-                # ----------------------------------------------------
-                # 💡 在這裡才匯入 MoviePy，避免啟動時報錯
-                # ----------------------------------------------------
+                # 延後匯入 MoviePy
                 from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
                 
                 progress_bar = st.progress(0)
@@ -217,7 +211,7 @@ with tab2:
                     clip = AudioFileClip(audio_path)
                     audio_clips.append(clip)
                     
-                    # 1 秒靜音 (MoviePy 2.1.2 寫法)
+                    # 1 秒靜音
                     ch = clip.nchannels 
                     silence_array = np.zeros((int(44100 * 1.0), ch))
                     silence = AudioArrayClip(silence_array, fps=44100)
@@ -235,10 +229,14 @@ with tab2:
                             tmp_bgm.write(bgm_file_d.getvalue())
                             tmp_bgm_path = tmp_bgm.name
                         music_track = AudioFileClip(tmp_bgm_path)
+                        
                         if music_track.duration < voice_track.duration:
                             n_loops = int(voice_track.duration / music_track.duration) + 1
                             music_track = concatenate_audioclips([music_track] * n_loops)
-                        music_track = music_track.subclip(0, voice_track.duration + 1).with_volume_scaled(bgm_vol_d)
+                        
+                        # 🔧 修正：將 .subclip 改為 .subclipped (適應 v2.0)
+                        music_track = music_track.subclipped(0, voice_track.duration + 1).with_volume_scaled(bgm_vol_d)
+                        
                         final_output = CompositeAudioClip([music_track, voice_track])
                         os.remove(tmp_bgm_path)
                     
@@ -254,7 +252,7 @@ with tab2:
                         st.download_button("📥 下載 MP3", f, "podcast_final.mp3", "audio/mp3")
 
             except ImportError as e:
-                st.error("環境安裝錯誤：找不到 MoviePy 或 Numpy。請確認 requirements.txt")
+                st.error("環境安裝錯誤。請確認 requirements.txt")
                 st.error(e)
             except Exception as e:
                 st.error(f"執行錯誤: {e}")
@@ -287,9 +285,6 @@ with tab3:
             clips_l = []
             
             try:
-                # ----------------------------------------------------
-                # 💡 在這裡才匯入 MoviePy
-                # ----------------------------------------------------
                 from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
 
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
@@ -304,7 +299,6 @@ with tab3:
                     clip = AudioFileClip(path)
                     clips_l.append(clip)
                     
-                    # 1 秒靜音
                     ch = clip.nchannels 
                     silence_array = np.zeros((int(44100 * 1.0), ch))
                     silence = AudioArrayClip(silence_array, fps=44100)
@@ -326,7 +320,10 @@ with tab3:
                         if mtrk.duration < voice_trk.duration:
                             nl = int(voice_trk.duration / mtrk.duration) + 1
                             mtrk = concatenate_audioclips([mtrk]*nl)
-                        mtrk = mtrk.subclip(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
+                        
+                        # 🔧 修正：將 .subclip 改為 .subclipped (適應 v2.0)
+                        mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
+                        
                         final_out = CompositeAudioClip([mtrk, voice_trk])
                         os.remove(tmppath)
 
@@ -342,7 +339,7 @@ with tab3:
                         st.download_button("📥 下載有聲書", f, "audiobook_final.mp3", "audio/mp3")
 
             except ImportError as e:
-                st.error("環境安裝錯誤：找不到 MoviePy 或 Numpy。請確認 requirements.txt")
+                st.error("環境安裝錯誤。請確認 requirements.txt")
                 st.error(e)
             except Exception as e:
                 st.error(f"錯誤: {e}")
