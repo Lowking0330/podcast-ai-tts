@@ -1,10 +1,13 @@
 import streamlit as st
 from gradio_client import Client
-from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip
+# 1. 新增 AudioClip 用來製造靜音
+from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioClip
 import os
 import re
 import tempfile
 import time
+# 2. 新增 numpy 用來計算靜音數據
+import numpy as np
 
 # ---------------------------------------------------------
 # 1. 資料設定與基礎函式
@@ -48,32 +51,18 @@ def bypass_client_validation(client, speaker_id):
         pass
 
 def split_long_text(text, max_chars=150):
-    """
-    智慧長文切分：
-    優先在標點符號 (.,!?) 處切分，避免切在單字中間。
-    """
-    # 1. 先把文字依照常見標點符號拆開 (保留標點)
-    # 支援全形與半形標點
     chunks = re.split(r'([。.?!？！\n])', text)
-    
     final_chunks = []
     current_chunk = ""
-    
     for chunk in chunks:
-        # 如果加上這一段還沒超過限制，就接起來
         if len(current_chunk) + len(chunk) < max_chars:
             current_chunk += chunk
         else:
-            # 如果超過了，先把目前的存起來
             if current_chunk.strip():
                 final_chunks.append(current_chunk.strip())
-            # 開啟新的一段
             current_chunk = chunk
-            
-    # 把最後剩下的也存進去
     if current_chunk.strip():
         final_chunks.append(current_chunk.strip())
-        
     return final_chunks
 
 # ---------------------------------------------------------
@@ -123,7 +112,7 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: Podcast 對話 (含 BGM)
+# 分頁 2: Podcast 對話 (含 1秒延遲)
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
@@ -135,22 +124,19 @@ with tab2:
         with col_bgm2:
             bgm_vol_d = st.slider("音樂音量", 0.05, 0.5, 0.15, 0.05, key="vol_d")
 
-    # (省略重複的介面代碼，直接使用 Session State 渲染)
+    # 腳本 UI
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container():
             col_idx, col_tribe, col_spk, col_text, col_del = st.columns([0.5, 2, 3, 6, 0.5])
             col_idx.write(f"#{i+1}")
-            
             new_tribe = col_tribe.selectbox("族群", list(speaker_map.keys()), key=f"d_tr_{i}", index=list(speaker_map.keys()).index(line['tribe']) if line['tribe'] in speaker_map else 0, label_visibility="collapsed")
             avail_spks = speaker_map[new_tribe]
-            current_spk_idx = avail_spks.index(line['speaker']) if line['speaker'] in avail_spks else 0
-            new_speaker = col_spk.selectbox("語者", avail_spks, key=f"d_sp_{i}", index=current_spk_idx, label_visibility="collapsed")
+            idx_spk = avail_spks.index(line['speaker']) if line['speaker'] in avail_spks else 0
+            new_speaker = col_spk.selectbox("語者", avail_spks, key=f"d_sp_{i}", index=idx_spk, label_visibility="collapsed")
             new_text = col_text.text_input("台詞", value=line['text'], key=f"d_tx_{i}", label_visibility="collapsed")
-            
             if col_del.button("❌", key=f"d_dl_{i}"):
                 st.session_state['dialogue_list'].pop(i)
                 st.rerun()
-
             st.session_state['dialogue_list'][i].update({'tribe': new_tribe, 'speaker': new_speaker, 'text': new_text})
 
     c_add, c_run = st.columns([1, 4])
@@ -159,47 +145,11 @@ with tab2:
         st.session_state['dialogue_list'].append(last.copy())
         st.rerun()
 
-    if c_run.button("🎙️ 開始合成 Podcast", type="primary"):
-        # (這裡的邏輯與之前相同，為節省篇幅省略，實際運作會使用上方共用的 import)
-        # 為了完整性，建議直接使用之前提供的 Podcast 邏輯，或將其封裝成函式
-        pass 
-        # *注意：為了讓程式碼更乾淨，我將核心合成邏輯統一寫在下方函式，這裡呼叫即可*
-        st.info("請使用下方的共用合成邏輯")
-
-# ==========================================
-# 分頁 3: 長文有聲書 (Audiobook) - 新功能 🚀
-# ==========================================
-with tab3:
-    st.subheader("長文有聲書製作 (Audiobook Mode)")
-    st.caption("貼上長篇文章，系統會自動切分段落、逐一合成，並接成一個完整的長音檔。")
-    
-    c_long_1, c_long_2 = st.columns(2)
-    with c_long_1:
-        long_tribe = st.selectbox("選擇朗讀族群", list(speaker_map.keys()), key="l_tribe", index=15)
-    with c_long_2:
-        long_speaker = st.selectbox("選擇朗讀語者", speaker_map[long_tribe], key="l_speaker")
-        
-    long_text_input = st.text_area("在此貼上長篇文章 (建議 2000 字以內)", height=300, placeholder="請貼上您的族語故事...")
-    
-    with st.expander("🎵 背景音樂設定 (BGM Settings)", expanded=True):
-        col_bgm3, col_bgm4 = st.columns([3, 1])
-        with col_bgm3:
-            bgm_file_l = st.file_uploader("上傳背景音樂", type=["mp3", "wav"], key="bgm_l")
-        with col_bgm4:
-            bgm_vol_l = st.slider("音樂音量", 0.05, 0.5, 0.15, 0.05, key="vol_l")
-
-    if st.button("📖 開始製作有聲書", type="primary"):
-        if not long_text_input.strip():
-            st.warning("請先貼上文章！")
+    if c_run.button("🎙️ 開始合成 Podcast (含間隔)", type="primary"):
+        dialogue = st.session_state['dialogue_list']
+        if not dialogue:
+            st.warning("腳本是空的！")
         else:
-            # 1. 執行智慧切分
-            chunks = split_long_text(clean_text(long_text_input), max_chars=120) # 設定 120 字切一段，安全係數高
-            
-            st.info(f"文章已自動切分為 {len(chunks)} 個段落，準備開始合成...")
-            with st.expander("查看切分結果"):
-                for i, c in enumerate(chunks):
-                    st.text(f"段落 {i+1}: {c}")
-            
             progress_bar = st.progress(0)
             status_text = st.empty()
             audio_clips = []
@@ -207,72 +157,146 @@ with tab3:
             try:
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 
-                # 預先切換一次族群
+                for idx, item in enumerate(dialogue):
+                    txt = clean_text(item['text'])
+                    spk = item['speaker']
+                    trb = item['tribe']
+                    if not txt: continue 
+                    
+                    status_text.text(f"正在合成第 {idx+1}/{len(dialogue)} 句...")
+                    bypass_client_validation(client, spk)
+                    try: client.predict(ethnicity=trb, api_name="/lambda")
+                    except: pass
+                    
+                    audio_path = client.predict(ref=spk, gen_text_input=txt, api_name="/default_speaker_tts")
+                    
+                    # 1. 加入人聲
+                    clip = AudioFileClip(audio_path)
+                    audio_clips.append(clip)
+                    
+                    # ----------------------------------------------------
+                    # 💡 核心修改：在每句話後面加入 1 秒鐘靜音
+                    # ----------------------------------------------------
+                    # 偵測聲道數 (1=單聲道, 2=雙聲道)，確保靜音格式跟人聲一樣
+                    ch = clip.nchannels 
+                    # 產生 1 秒鐘的靜音數據 (全部填 0)
+                    silence = AudioClip(lambda t: np.zeros((len(t), ch)), duration=1.0, fps=44100)
+                    audio_clips.append(silence)
+                    # ----------------------------------------------------
+                    
+                    progress_bar.progress((idx + 1) / len(dialogue))
+
+                if audio_clips:
+                    status_text.text("合成完成，正在接合...")
+                    voice_track = concatenate_audioclips(audio_clips)
+                    
+                    # (以下為 BGM 混音邏輯，與之前相同)
+                    final_output = voice_track
+                    if bgm_file_d is not None:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_bgm:
+                            tmp_bgm.write(bgm_file_d.getvalue())
+                            tmp_bgm_path = tmp_bgm.name
+                        music_track = AudioFileClip(tmp_bgm_path)
+                        if music_track.duration < voice_track.duration:
+                            n_loops = int(voice_track.duration / music_track.duration) + 1
+                            music_track = concatenate_audioclips([music_track] * n_loops)
+                        music_track = music_track.subclip(0, voice_track.duration + 1).volumex(bgm_vol_d)
+                        final_output = CompositeAudioClip([music_track, voice_track])
+                        os.remove(tmp_bgm_path)
+                    
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    final_output.write_audiofile(temp_file.name, logger=None, fps=44100)
+                    
+                    # 關閉資源 (包含靜音片段)
+                    for c in audio_clips: c.close()
+                    final_output.close()
+                    
+                    st.success("🎉 Podcast 完成！(已加入每句 1 秒間隔)")
+                    st.audio(temp_file.name, format="audio/mp3")
+                    with open(temp_file.name, "rb") as f:
+                        st.download_button("📥 下載 MP3", f, "podcast_with_delay.mp3", "audio/mp3")
+
+            except Exception as e:
+                st.error(f"錯誤: {e}")
+
+# ==========================================
+# 分頁 3: 長文有聲書 (含 1秒延遲)
+# ==========================================
+with tab3:
+    st.subheader("長文有聲書製作")
+    c_l1, c_l2 = st.columns(2)
+    with c_l1: long_tribe = st.selectbox("朗讀族群", list(speaker_map.keys()), key="l_tr", index=15)
+    with c_l2: long_speaker = st.selectbox("朗讀語者", speaker_map[long_tribe], key="l_sp")
+        
+    long_text = st.text_area("貼上長文 (自動切分)", height=250)
+    
+    with st.expander("🎵 背景音樂設定", expanded=True):
+        c_b3, c_b4 = st.columns([3, 1])
+        with c_b3: bgm_file_l = st.file_uploader("上傳音樂", type=["mp3", "wav"], key="bgm_l")
+        with c_b4: bgm_vol_l = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_l")
+
+    if st.button("📖 開始製作", type="primary"):
+        if not long_text.strip():
+            st.warning("請先輸入文字")
+        else:
+            chunks = split_long_text(clean_text(long_text), 120)
+            st.info(f"已切分為 {len(chunks)} 段，開始合成...")
+            
+            prog = st.progress(0)
+            stat = st.empty()
+            clips_l = []
+            
+            try:
+                client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 try: client.predict(ethnicity=long_tribe, api_name="/lambda")
                 except: pass
                 bypass_client_validation(client, long_speaker)
 
                 for idx, chunk in enumerate(chunks):
-                    status_text.text(f"正在合成第 {idx+1}/{len(chunks)} 段...")
+                    stat.text(f"合成第 {idx+1}/{len(chunks)} 段...")
+                    path = client.predict(ref=long_speaker, gen_text_input=chunk, api_name="/default_speaker_tts")
                     
-                    # 呼叫 API
-                    audio_path = client.predict(
-                        ref=long_speaker, 
-                        gen_text_input=chunk, 
-                        api_name="/default_speaker_tts"
-                    )
+                    clip = AudioFileClip(path)
+                    clips_l.append(clip)
                     
-                    clip = AudioFileClip(audio_path)
-                    audio_clips.append(clip)
+                    # ----------------------------------------------------
+                    # 💡 核心修改：每段結束後加入 1 秒鐘靜音
+                    # ----------------------------------------------------
+                    ch = clip.nchannels
+                    silence = AudioClip(lambda t: np.zeros((len(t), ch)), duration=1.0, fps=44100)
+                    clips_l.append(silence)
+                    # ----------------------------------------------------
                     
-                    # 稍微暫停一下，避免 API 請求太快被擋
-                    time.sleep(0.5) 
-                    progress_bar.progress((idx + 1) / len(chunks))
+                    time.sleep(0.5)
+                    prog.progress((idx + 1) / len(chunks))
                 
-                if audio_clips:
-                    status_text.text("合成完成，正在接合並混音...")
+                if clips_l:
+                    stat.text("接合中...")
+                    voice_trk = concatenate_audioclips(clips_l)
+                    final_out = voice_trk
                     
-                    # 串接人聲
-                    voice_track = concatenate_audioclips(audio_clips)
-                    final_duration = voice_track.duration
-                    final_output = voice_track
+                    if bgm_file_l:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                            tmp.write(bgm_file_l.getvalue())
+                            tmppath = tmp.name
+                        mtrk = AudioFileClip(tmppath)
+                        if mtrk.duration < voice_trk.duration:
+                            nl = int(voice_trk.duration / mtrk.duration) + 1
+                            mtrk = concatenate_audioclips([mtrk]*nl)
+                        mtrk = mtrk.subclip(0, voice_trk.duration + 1).volumex(bgm_vol_l)
+                        final_out = CompositeAudioClip([mtrk, voice_trk])
+                        os.remove(tmppath)
+
+                    tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    final_out.write_audiofile(tmpf.name, logger=None, fps=44100)
                     
-                    # BGM 處理
-                    if bgm_file_l is not None:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_bgm:
-                            tmp_bgm.write(bgm_file_l.getvalue())
-                            tmp_bgm_path = tmp_bgm.name
-                        
-                        music_track = AudioFileClip(tmp_bgm_path)
-                        
-                        # 循環與裁切
-                        if music_track.duration < final_duration:
-                            n_loops = int(final_duration / music_track.duration) + 1
-                            music_track = concatenate_audioclips([music_track] * n_loops)
-                        
-                        music_track = music_track.subclip(0, final_duration + 1)
-                        music_track = music_track.volumex(bgm_vol_l)
-                        
-                        final_output = CompositeAudioClip([music_track, voice_track])
-                        os.remove(tmp_bgm_path)
+                    for c in clips_l: c.close()
+                    final_out.close()
                     
-                    # 匯出
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                    final_output.write_audiofile(temp_file.name, logger=None, fps=44100)
-                    
-                    for clip in audio_clips: clip.close()
-                    final_output.close()
-                    
-                    st.success("🎉 有聲書製作完成！")
-                    st.audio(temp_file.name, format="audio/mp3")
-                    
-                    with open(temp_file.name, "rb") as f:
-                        st.download_button(
-                            label="📥 下載有聲書 MP3",
-                            data=f,
-                            file_name="indigenous_audiobook.mp3",
-                            mime="audio/mp3"
-                        )
-            
+                    st.success("🎉 有聲書完成！(含段落間隔)")
+                    st.audio(tmpf.name, format="audio/mp3")
+                    with open(tmpf.name, "rb") as f:
+                        st.download_button("📥 下載有聲書", f, "audiobook_delayed.mp3", "audio/mp3")
+
             except Exception as e:
-                st.error(f"發生錯誤: {e}")
+                st.error(f"錯誤: {e}")
