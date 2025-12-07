@@ -1,103 +1,120 @@
 import streamlit as st
-import requests
-import json
-import time
+from gradio_client import Client
+import os
 
-# --- 設定頁面資訊 ---
-st.set_page_config(page_title="原住民族語 Podcast 生成器", layout="wide")
+# --- 1. 設定與連線 ---
+GRADIO_URL = "https://hnang-kari-ai-asi-sluhay.ithuan.tw/"
 
-st.title("🎙️ 原住民族語 Podcast 生成工作台")
-st.markdown("輸入講稿文字，透過自研 TTS 模型生成族語音檔。")
+st.set_page_config(page_title="原住民族語 Podcast 生成器", layout="wide", page_icon="🎙️")
 
-# --- 側邊欄：API 設定與參數 ---
+st.title("🎙️ 族語 TTS Podcast 工作台")
+st.markdown(f"Backend: `{GRADIO_URL}`")
+
+# 快取 Client 連線，避免每次重新整理都要重連
+@st.cache_resource
+def get_client():
+    return Client(GRADIO_URL)
+
+try:
+    client = get_client()
+    st.toast("API 連線成功！", icon="✅")
+except Exception as e:
+    st.error(f"無法連線到 API: {e}")
+    st.stop()
+
+# --- 2. 側邊欄：設定參數 ---
 with st.sidebar:
-    st.header("⚙️ 系統設定")
-    # 這裡模擬填入你們 TTS API 的位置
-    api_url = st.text_input("TTS API 網址", value="http://your-tts-api.com/synthesize")
-    api_key = st.text_input("API Key (若需要)", type="password")
+    st.header("⚙️ 語者設定")
     
-    st.divider()
+    # 根據您的 Log，這裡列出已知的語者格式
+    # 因為無法抓取全部，我先列出 Log 裡有的，並提供「手動輸入」選項
+    speaker_options = [
+        "阿美_海岸_男聲",
+        "阿美_恆春_女聲",
+        "阿美_馬蘭_女聲",
+        "阿美_南勢_女聲",
+        "阿美_秀姑巒_女聲1",
+        "阿美_秀姑巒_女聲2",
+        "阿美_太魯閣_男聲"
+        "阿美_太魯閣_女聲"
+        "手動輸入其他語者 ID..."
+    ]
     
-    # 模擬選擇族語或語者
-    language = st.selectbox("選擇語言", ["阿美語 (Amis)", "排灣語 (Paiwan)", "泰雅語 (Atayal)"])
-    speaker_id = st.selectbox("選擇語者", ["Female_01 (耆老)", "Male_01 (青年)"])
+    selected_speaker = st.selectbox("選擇語者 (Speaker ID)", speaker_options)
     
-    speed = st.slider("語速調整", 0.5, 2.0, 1.0)
+    # 如果選擇手動輸入，顯示文字框
+    final_speaker_id = selected_speaker
+    if selected_speaker == "手動輸入其他語者 ID...":
+        final_speaker_id = st.text_input("請輸入語者 ID (例如: 賽德克_都達_女聲)", value="阿美_海岸_男聲")
+        st.caption("提示：請確認輸入的 ID 與網站上的選單完全一致。")
 
-# --- 主畫面：輸入講稿 ---
+    st.info(f"目前設定語者：**{final_speaker_id}**")
+
+# --- 3. 主畫面：輸入講稿 ---
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    episode_title = st.text_input("單集標題", "第一集：族語生活會話")
-    # 文字輸入區
-    text_input = st.text_area("在此輸入講稿 (支援族語羅馬拼音)", height=300)
+    st.subheader("📝 輸入講稿")
+    text_input = st.text_area(
+        "請輸入族語或羅馬拼音", 
+        height=300, 
+        placeholder="Mihalay! ...",
+        help="輸入您想要轉換成語音的文字內容。"
+    )
 
-# --- 核心功能：呼叫 API 並生成 ---
-def call_tts_api(text, lang, spk, speed):
-    """
-    這裡負責將資料傳送給你們開發的 TTS API
-    """
-    # 準備要傳給 API 的資料 (Payload)
-    payload = {
-        "text": text,
-        "language": lang,
-        "speaker": spk,
-        "speed": speed
-    }
+with col2:
+    st.subheader("🎧 生成結果")
+    st.write("準備好後，點擊下方按鈕開始合成。")
     
-    # 加上 Header (若有驗證機制)
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    generate_btn = st.button("🚀 開始合成語音 (Generate)", type="primary", use_container_width=True)
 
-    try:
-        # 注意：這裡是一個模擬的 request，實際使用時請取消註解並填入正確參數
-        # response = requests.post(api_url, json=payload, headers=headers)
-        
-        # --- 模擬 API 回傳 (為了讓範例能跑，我這裡做一個假延遲) ---
-        time.sleep(2) 
-        if text:
-            return True, "模擬音檔.wav" # 假設成功回傳
-        else:
-            return False, "請輸入文字"
-        # -----------------------------------------------------
-        
-        # 真正的程式碼應該長這樣：
-        # if response.status_code == 200:
-        #     return True, response.content (音檔二進位資料)
-        # else:
-        #     return False, response.text
-
-    except Exception as e:
-        return False, str(e)
-
-# 生成按鈕
-if st.button("🚀 開始合成語音", type="primary"):
+# --- 4. 執行合成邏輯 ---
+if generate_btn:
     if not text_input:
-        st.warning("請先輸入講稿內容！")
+        st.warning("❌ 請先輸入文字內容！")
     else:
-        with st.spinner("正在呼叫族語 TTS 引擎進行合成..."):
-            success, result = call_tts_api(text_input, language, speaker_id, speed)
-            
-        if success:
-            st.success("合成成功！")
-            
-            # 顯示音訊播放器
-            # 注意：如果 API 回傳的是二進位資料 (bytes)，直接用 result 即可
-            # 如果是模擬，這裡只是示範 UI
-            st.audio("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", format="audio/mp3")
-            
-            # 提供下載按鈕
-            st.download_button(
-                label="📥 下載 Podcast 音檔 (.wav)",
-                data=b"Fake Audio Bytes", # 這裡放入真正的音檔 bytes
-                file_name=f"{episode_title}.wav",
-                mime="audio/wav"
-            )
-            
-            st.info(f"已使用參數：語言={language}, 語者={speaker_id}")
-            
-        else:
-            st.error(f"合成失敗：{result}")
+        with st.spinner(f"正在請求 API 合成 ({final_speaker_id})..."):
+            try:
+                # 呼叫 /default_speaker_tts 端點
+                # 根據 Log: predict(ref, gen_text_input, api_name="/default_speaker_tts")
+                result_path = client.predict(
+                    ref=final_speaker_id,      # 第一個參數：語者 ID
+                    gen_text_input=text_input, # 第二個參數：文字
+                    api_name="/default_speaker_tts"
+                )
+                
+                # 顯示成功訊息
+                st.success("✅ 合成完成！")
+                
+                # 1. 播放音檔
+                st.audio(result_path)
+                
+                # 2. 製作下載按鈕
+                # 讀取暫存檔的二進位資料
+                with open(result_path, "rb") as f:
+                    audio_bytes = f.read()
+                    
+                st.download_button(
+                    label="📥 下載 .wav 音檔",
+                    data=audio_bytes,
+                    file_name=f"podcast_output_{final_speaker_id}.wav",
+                    mime="audio/wav",
+                    use_container_width=True
+                )
+                
+                # 除錯資訊 (可隱藏)
+                with st.expander("檢視 API 回傳路徑"):
+                    st.code(result_path)
+
+            except Exception as e:
+                st.error("合成失敗，請檢查以下錯誤訊息：")
+                st.code(str(e))
+                st.markdown("""
+                **可能原因排除：**
+                1. **語者 ID 錯誤**：請確認您輸入的 `賽德克_xxx` 是否與原網站下拉選單完全一致。
+                2. **文字過長**：若是免費版 HuggingFace Space，可能會有限制時長。
+                """)
 
 # --- 頁尾 ---
 st.markdown("---")
-st.caption("Powered by 自研原住民族語 TTS 系統 | Internal Tool")
+st.caption("Podcast AI Tool | Powered by Ithuan TTS API")
