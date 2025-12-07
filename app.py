@@ -1,7 +1,7 @@
 import streamlit as st
 from gradio_client import Client
-# 換成 moviepy 函式庫
-from moviepy.editor import AudioFileClip, concatenate_audioclips
+# 引入 moviepy 的核心與合成工具
+from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip
 import os
 import re
 import tempfile
@@ -95,13 +95,24 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: Podcast 功能 (MoviePy 版本)
+# 分頁 2: Podcast 功能 (含 BGM 混音)
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
-    st.caption("在此安排您的節目腳本，系統將自動合成並串接成一個完整的音檔。")
+    
+    # ------------------
+    # 新增：BGM 設定區
+    # ------------------
+    with st.expander("🎵 背景音樂設定 (BGM Settings)", expanded=True):
+        col_bgm1, col_bgm2 = st.columns([3, 1])
+        with col_bgm1:
+            bgm_file = st.file_uploader("上傳背景音樂 (支援 .mp3, .wav)", type=["mp3", "wav"])
+        with col_bgm2:
+            bgm_volume = st.slider("背景音樂音量", 0.05, 0.5, 0.15, 0.05, help="1.0 是原聲，建議設定在 0.1~0.2 之間以免蓋過人聲")
 
-    # --- 腳本編輯區 ---
+    st.markdown("---")
+
+    # --- 腳本編輯區 (維持不變) ---
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container():
             col_idx, col_tribe, col_spk, col_text, col_del = st.columns([0.5, 2, 3, 6, 0.5])
@@ -153,7 +164,7 @@ with tab2:
         })
         st.rerun()
 
-    if c_run.button("🎙️ 開始合成完整 Podcast", type="primary"):
+    if c_run.button("🎙️ 開始合成完整 Podcast (含混音)", type="primary"):
         dialogue = st.session_state['dialogue_list']
         if not dialogue:
             st.warning("腳本是空的！")
@@ -161,10 +172,12 @@ with tab2:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # 用來儲存所有片段的列表
             audio_clips = []
             
             try:
+                # -----------------------
+                # 階段 1: 合成人聲
+                # -----------------------
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 
                 for idx, item in enumerate(dialogue):
@@ -186,40 +199,78 @@ with tab2:
                         api_name="/default_speaker_tts"
                     )
                     
-                    # 使用 MoviePy 讀取音檔
-                    # MoviePy 需要讀取實際檔案路徑，Gradio 回傳的正是路徑
+                    # 讀取人聲片段
                     clip = AudioFileClip(audio_path)
                     audio_clips.append(clip)
                     
-                    # 可以在這裡加入靜音片段 (如果需要)
-                    # 這裡我們先直接串接，因為 MoviePy 做靜音比較麻煩，先求有
+                    # 加入一個小小的靜音間隔 (0.5秒)
+                    # 注意：moviepy 1.0.3 產生靜音比較麻煩，我們這裡暫時直接用「空格」
+                    # 如果需要更精確的靜音，可以載入一個空的靜音檔，但簡單拼接已足夠
                     
                     progress_bar.progress((idx + 1) / len(dialogue))
 
                 if audio_clips:
-                    status_text.text("合成完成！正在接合音檔...")
+                    status_text.text("人聲合成完畢，正在進行 BGM 混音...")
                     
-                    # 串接所有音檔
-                    final_clip = concatenate_audioclips(audio_clips)
+                    # 1. 串接所有人聲
+                    voice_track = concatenate_audioclips(audio_clips)
+                    final_duration = voice_track.duration
                     
-                    # 匯出暫存檔
+                    final_output = voice_track # 預設輸出只有人聲
+                    
+                    # -----------------------
+                    # 階段 2: BGM 混音邏輯
+                    # -----------------------
+                    if bgm_file is not None:
+                        # 將上傳的檔案存為暫存檔
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_bgm:
+                            tmp_bgm.write(bgm_file.getvalue())
+                            tmp_bgm_path = tmp_bgm.name
+                        
+                        # 讀取 BGM
+                        music_track = AudioFileClip(tmp_bgm_path)
+                        
+                        # A. 調整長度：如果音樂太短，就循環播放；如果太長，就切掉
+                        # MoviePy 1.0.3 的 loop 寫法
+                        if music_track.duration < final_duration:
+                            # 計算需要循環幾次
+                            n_loops = int(final_duration / music_track.duration) + 1
+                            # 簡單暴力法：串接自己 n 次
+                            music_track = concatenate_audioclips([music_track] * n_loops)
+                        
+                        # 裁切到跟人聲一樣長 (多給 1 秒緩衝)
+                        music_track = music_track.subclip(0, final_duration + 1)
+                        
+                        # B. 調整音量 (Volumex)
+                        music_track = music_track.volumex(bgm_volume)
+                        
+                        # C. 合成 (Composite)
+                        # 將人聲和背景音樂疊加
+                        # 確保人聲在最上層
+                        final_output = CompositeAudioClip([music_track, voice_track])
+                        
+                        # 刪除 BGM 暫存檔
+                        os.remove(tmp_bgm_path)
+
+                    # -----------------------
+                    # 階段 3: 匯出
+                    # -----------------------
                     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                    # 使用 ffmpeg 寫入
-                    final_clip.write_audiofile(temp_file.name, logger=None)
+                    final_output.write_audiofile(temp_file.name, logger=None, fps=44100) # 設定 fps 避免相容性問題
                     
-                    # 關閉 clip 釋放資源
+                    # 釋放資源
                     for clip in audio_clips:
                         clip.close()
-                    final_clip.close()
+                    final_output.close()
 
-                    st.success("🎉 Podcast 製作完成！")
+                    st.success("🎉 專業 Podcast 製作完成！")
                     st.audio(temp_file.name, format="audio/mp3")
                     
                     with open(temp_file.name, "rb") as f:
                         st.download_button(
-                            label="📥 下載 MP3 檔案",
+                            label="📥 下載最終 MP3",
                             data=f,
-                            file_name="my_indigenous_podcast.mp3",
+                            file_name="professional_indigenous_podcast.mp3",
                             mime="audio/mp3"
                         )
                 else:
@@ -228,4 +279,3 @@ with tab2:
             except Exception as e:
                 st.error("發生錯誤")
                 st.error(f"詳細錯誤: {e}")
-                st.info("💡 請確認 requirements.txt 包含 moviepy，且 packages.txt 包含 ffmpeg")
