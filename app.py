@@ -1,6 +1,7 @@
 import streamlit as st
 from gradio_client import Client
-from pydub import AudioSegment
+# 換成 moviepy 函式庫
+from moviepy.editor import AudioFileClip, concatenate_audioclips
 import os
 import re
 import tempfile
@@ -34,7 +35,6 @@ def clean_text(text):
     return text
 
 def bypass_client_validation(client, speaker_id):
-    """ 強制將語者加入白名單 """
     try:
         target_endpoints = [client.endpoints.get('/default_speaker_tts'), client.endpoints.get('/custom_speaker_tts')]
         for endpoint in target_endpoints:
@@ -53,7 +53,6 @@ def bypass_client_validation(client, speaker_id):
 st.set_page_config(page_title="原住民族語 Podcast 生成器", layout="wide")
 st.title("臺灣原住民族語 Podcast 生成器 🎙️")
 
-# 使用 Session State 來儲存對話腳本
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = [
         {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho! (你好!)"}, 
@@ -66,7 +65,7 @@ if 'dialogue_list' not in st.session_state:
 tab1, tab2 = st.tabs(["單句測試 (Single)", "Podcast 對話製作 (Dialogue)"])
 
 # ==========================================
-# 分頁 1: 原本的單句功能
+# 分頁 1: 單句功能
 # ==========================================
 with tab1:
     st.subheader("單句語音合成測試")
@@ -96,7 +95,7 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: 多語者對話模式 (Podcast 核心功能)
+# 分頁 2: Podcast 功能 (MoviePy 版本)
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
@@ -106,11 +105,8 @@ with tab2:
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container():
             col_idx, col_tribe, col_spk, col_text, col_del = st.columns([0.5, 2, 3, 6, 0.5])
-            
-            # 顯示序號
             col_idx.write(f"#{i+1}")
             
-            # 族群選擇
             new_tribe = col_tribe.selectbox(
                 "族群", list(speaker_map.keys()), 
                 key=f"tribe_{i}", 
@@ -118,9 +114,7 @@ with tab2:
                 label_visibility="collapsed"
             )
             
-            # 語者選擇 (根據族群連動)
             avail_spks = speaker_map[new_tribe]
-            # 確保原本的語者還在新的清單裡，否則選第一個
             current_spk_idx = 0
             if line['speaker'] in avail_spks:
                 current_spk_idx = avail_spks.index(line['speaker'])
@@ -132,7 +126,6 @@ with tab2:
                 label_visibility="collapsed"
             )
             
-            # 文字輸入
             new_text = col_text.text_input(
                 "台詞", value=line['text'], 
                 key=f"text_{i}",
@@ -140,22 +133,18 @@ with tab2:
                 placeholder="請輸入台詞..."
             )
             
-            # 刪除按鈕
             if col_del.button("❌", key=f"del_{i}"):
                 st.session_state['dialogue_list'].pop(i)
                 st.rerun()
 
-            # 更新 Session State
             st.session_state['dialogue_list'][i]['tribe'] = new_tribe
             st.session_state['dialogue_list'][i]['speaker'] = new_speaker
             st.session_state['dialogue_list'][i]['text'] = new_text
 
-    # --- 操作按鈕區 ---
     st.markdown("---")
     c_add, c_run = st.columns([1, 4])
     
     if c_add.button("➕ 新增一句對話"):
-        # 預設複製上一句的設定，方便連續輸入
         last_item = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": ""}
         st.session_state['dialogue_list'].append({
             "tribe": last_item['tribe'],
@@ -172,10 +161,8 @@ with tab2:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # 準備一個空的 AudioSegment 來裝結果
-            combined_audio = AudioSegment.empty()
-            # 設定靜音間隔 (毫秒)，讓對話之間不要太趕
-            silence = AudioSegment.silent(duration=500) 
+            # 用來儲存所有片段的列表
+            audio_clips = []
             
             try:
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
@@ -185,51 +172,60 @@ with tab2:
                     spk = item['speaker']
                     trb = item['tribe']
                     
-                    if not txt: continue # 跳過空行
+                    if not txt: continue 
                     
                     status_text.text(f"正在合成第 {idx+1}/{len(dialogue)} 句：{spk} 說「{txt[:10]}...」")
                     
-                    # 1. 繞過驗證
                     bypass_client_validation(client, spk)
-                    
-                    # 2. 切換族群 (這步很重要，避免模型錯亂)
                     try: client.predict(ethnicity=trb, api_name="/lambda")
                     except: pass
                     
-                    # 3. 合成
                     audio_path = client.predict(
                         ref=spk, 
                         gen_text_input=txt, 
                         api_name="/default_speaker_tts"
                     )
                     
-                    # 4. 使用 pydub 讀取並串接
-                    # Gradio 回傳的通常是 WAV 或 FLAC
-                    segment = AudioSegment.from_file(audio_path)
-                    combined_audio += segment + silence
+                    # 使用 MoviePy 讀取音檔
+                    # MoviePy 需要讀取實際檔案路徑，Gradio 回傳的正是路徑
+                    clip = AudioFileClip(audio_path)
+                    audio_clips.append(clip)
                     
-                    # 更新進度條
+                    # 可以在這裡加入靜音片段 (如果需要)
+                    # 這裡我們先直接串接，因為 MoviePy 做靜音比較麻煩，先求有
+                    
                     progress_bar.progress((idx + 1) / len(dialogue))
 
-                status_text.text("合成完成！正在匯出音檔...")
-                
-                # 匯出成 Bytes
-                buffer = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                combined_audio.export(buffer.name, format="mp3")
-                
-                st.success("🎉 Podcast 製作完成！")
-                st.audio(buffer.name, format="audio/mp3")
-                
-                # 提供下載按鈕
-                with open(buffer.name, "rb") as f:
-                    st.download_button(
-                        label="📥 下載 MP3 檔案",
-                        data=f,
-                        file_name="my_indigenous_podcast.mp3",
-                        mime="audio/mp3"
-                    )
+                if audio_clips:
+                    status_text.text("合成完成！正在接合音檔...")
+                    
+                    # 串接所有音檔
+                    final_clip = concatenate_audioclips(audio_clips)
+                    
+                    # 匯出暫存檔
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    # 使用 ffmpeg 寫入
+                    final_clip.write_audiofile(temp_file.name, logger=None)
+                    
+                    # 關閉 clip 釋放資源
+                    for clip in audio_clips:
+                        clip.close()
+                    final_clip.close()
+
+                    st.success("🎉 Podcast 製作完成！")
+                    st.audio(temp_file.name, format="audio/mp3")
+                    
+                    with open(temp_file.name, "rb") as f:
+                        st.download_button(
+                            label="📥 下載 MP3 檔案",
+                            data=f,
+                            file_name="my_indigenous_podcast.mp3",
+                            mime="audio/mp3"
+                        )
+                else:
+                    st.warning("沒有成功生成任何語音片段。")
                 
             except Exception as e:
-                st.error("發生錯誤，可能是 pydub 找不到 ffmpeg，或是網路問題。")
+                st.error("發生錯誤")
                 st.error(f"詳細錯誤: {e}")
-                st.info("💡 如果是 ffmpeg 錯誤，請確認您的電腦有安裝 ffmpeg，或在 Streamlit Cloud 的 packages.txt 加入 ffmpeg。")
+                st.info("💡 請確認 requirements.txt 包含 moviepy，且 packages.txt 包含 ffmpeg")
