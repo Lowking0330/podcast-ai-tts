@@ -1,2 +1,2 @@
 gradio-client
-pydub
+moviepy
