@@ -2,3 +2,4 @@ gradio-client
 moviepy
 numpy
 edge-tts
+nest_asyncio
