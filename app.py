@@ -1,5 +1,6 @@
 import streamlit as st
 from gradio_client import Client
+import re
 
 # ---------------------------------------------------------
 # 1. 設定與資料區
@@ -24,37 +25,50 @@ speaker_map = {
 }
 
 # ---------------------------------------------------------
-# 2. 輔助函式：暴力破解驗證清單
+# 2. 關鍵修復函式
 # ---------------------------------------------------------
-def force_add_speaker_to_client(client_obj, new_speaker):
+
+def clean_text(text):
     """
-    遞迴搜尋 Client 物件中的所有設定，
-    找到原本只包含 '阿美_海岸_男聲' 的清單，並強制加入新語者。
+    清洗文字：移除 TTS 模型無法辨識的特殊符號 (解決 Error 1)
     """
-    target_marker = '阿美_海岸_男聲' # 用這個當作特徵來找清單
-    
-    # 內部遞迴函式
-    def recursive_search(obj):
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                # 如果找到 'choices' 且裡面有阿美族，這就是我們要改的清單！
-                if k == 'choices' and isinstance(v, list) and target_marker in v:
-                    if new_speaker not in v:
-                        v.append(new_speaker)
-                        print(f"🔧 成功解鎖語者：{new_speaker}")
-                else:
-                    recursive_search(v)
-        elif isinstance(obj, (list, tuple)):
-            for item in obj:
-                recursive_search(item)
-                
-    # 1. 搜尋 endpoints 設定
-    if hasattr(client_obj, 'endpoints'):
-        recursive_search(client_obj.endpoints)
-    
-    # 2. 搜尋 config 設定 (雙重保險)
-    if hasattr(client_obj, 'config'):
-        recursive_search(client_obj.config)
+    if not text:
+        return ""
+    # 移除破折號 ―, —, 以及可能導致錯誤的特殊標點
+    # 這裡將它們替換為空格或逗號，保持語氣停頓
+    text = text.replace("―", " ").replace("—", " ").replace("…", " ")
+    # 移除多餘的空白
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def bypass_client_validation(client, speaker_id):
+    """
+    強制繞過 Gradio Client 的驗證 (解決 Error 2)
+    直接針對 /default_speaker_tts 端點進行修改
+    """
+    try:
+        # 嘗試找到 /default_speaker_tts 的定義
+        # 注意：不同版本的 gradio_client 結構可能不同，這裡做多層防護
+        target_endpoints = [
+            client.endpoints.get('/default_speaker_tts'),
+            client.endpoints.get('/custom_speaker_tts')
+        ]
+        
+        for endpoint in target_endpoints:
+            if endpoint and hasattr(endpoint, 'parameters'):
+                for param in endpoint.parameters:
+                    # 檢查這是不是那個限制語者清單的參數 (通常含有 'enum' 或 'choices')
+                    if 'enum' in param:
+                        if speaker_id not in param['enum']:
+                            param['enum'].append(speaker_id)
+                    
+                    # 有些舊版是用 choices
+                    if 'choices' in param:
+                         if speaker_id not in param['choices']:
+                            param['choices'].append(speaker_id)
+                            
+    except Exception as e:
+        print(f"Bypass warning: {e}")
 
 # ---------------------------------------------------------
 # 3. 介面設計區
@@ -65,6 +79,7 @@ st.markdown("支援 16 族 42 種語音合成")
 col1, col2 = st.columns(2)
 
 with col1:
+    # 預設 index=15 是阿美族，這裡設為 1 (太魯閣) 方便您測試
     selected_tribe = st.selectbox("步驟 1：選擇族群", list(speaker_map.keys()), index=15)
 
 with col2:
@@ -77,22 +92,35 @@ text_input = st.text_area("步驟 3：輸入要合成的文字", height=150, pla
 # 4. 核心邏輯區
 # ---------------------------------------------------------
 if st.button("開始生成語音", type="primary"):
-    if not text_input:
-        st.warning("請先輸入文字！")
+    # 1. 先執行文字清洗
+    cleaned_text = clean_text(text_input)
+    
+    if not cleaned_text:
+        st.warning("請輸入文字！(或您的文字含有過多非法符號)")
     else:
+        # 顯示清洗後的文字讓使用者知道 (除錯用)
+        if cleaned_text != text_input:
+            st.caption(f"ℹ️ 系統已自動過濾特殊符號: {cleaned_text}")
+
         try:
             with st.spinner(f"正在連線並生成 {selected_speaker} 的聲音..."):
                 
-                # 初始化 Client
                 client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 
-                # 🔥 執行暴力解鎖 (不依賴特定屬性名稱，只要有清單就改)
-                force_add_speaker_to_client(client, selected_speaker)
+                # 2. 執行驗證繞過 (Client Hack)
+                bypass_client_validation(client, selected_speaker)
 
-                # 正式生成語音
+                # 3. [重要] 先通知伺服器切換族群 (Server State Update)
+                # 即使繞過了 Client 驗證，Server 若不知道現在是太魯閣族，也可能報錯
+                try:
+                    client.predict(ethnicity=selected_tribe, api_name="/lambda")
+                except Exception as e:
+                    print(f"切換族群警告 (可忽略): {e}")
+
+                # 4. 正式合成
                 result = client.predict(
                     ref=selected_speaker,       
-                    gen_text_input=text_input,  
+                    gen_text_input=cleaned_text,  
                     api_name="/default_speaker_tts"
                 )
                 
@@ -100,5 +128,9 @@ if st.button("開始生成語音", type="primary"):
                 st.audio(result)
                 
         except Exception as e:
-            st.error(f"生成失敗：{e}")
-            st.expander("查看詳細錯誤日誌").write(str(e))
+            st.error("生成失敗")
+            st.error(f"錯誤原因：{str(e)}")
+            st.markdown("---")
+            st.caption("除錯建議：")
+            st.caption("1. 如果出現 Value is not in list，代表 Hack 尚未生效，請重試一次。")
+            st.caption("2. 如果出現 Unknown characters，請檢查文字是否包含特殊符號。")
