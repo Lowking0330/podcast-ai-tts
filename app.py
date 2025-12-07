@@ -73,8 +73,8 @@ st.title("臺灣原住民族語 Podcast 生成器 🎙️")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = [
-        {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho! (你好!)"}, 
-        {"tribe": "太魯閣", "speaker": "太魯閣_女聲", "text": "Embiyax su hug? (你好嗎?)"}
+        {"tribe": "阿美", "speaker": "阿美_海岸_男聲", "text": "Nga'ay ho!"}, 
+        {"tribe": "太魯閣", "speaker": "太魯閣_女聲", "text": "Embiyax su hug?"}
     ]
 
 # ---------------------------------------------------------
