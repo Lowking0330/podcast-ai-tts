@@ -1,4 +1,4 @@
 gradio-client
 moviepy
 numpy
-gTTS
+edge-tts
