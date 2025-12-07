@@ -9,7 +9,7 @@ import numpy as np
 import json
 import asyncio
 import edge_tts 
-from gtts import gTTS # 備用方案
+from gtts import gTTS
 
 # ---------------------------------------------------------
 # 1. 資料設定與基礎函式
@@ -34,21 +34,11 @@ speaker_map = {
 }
 
 def clean_text(text):
-    """
-    修正版文字清洗：
-    1. 絕對保留阿美語的 "'" (格格音)
-    2. 將中文全形標點轉為半形 (避免 TTS 模型崩潰)
-    """
     if not text: return ""
-    
-    # 替換常見的全形標點為半形
+    # 強力清洗：轉半形，保留 ' 
     text = text.replace("，", ",").replace("。", ".").replace("？", "?").replace("！", "!")
     text = text.replace("：", ":").replace("；", ";").replace("（", "(").replace("）", ")")
-    
-    # 移除破折號等無法發音的符號，但保留 ' (阿美語關鍵)
     text = text.replace("―", " ").replace("—", " ").replace("…", " ")
-    
-    # 移除多餘空白
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -80,39 +70,60 @@ def split_long_text(text, max_chars=150):
         final_chunks.append(current_chunk.strip())
     return final_chunks
 
-# ---------------------------------------------------------
-# 🔧 關鍵修正：更穩定的中文語音生成函式
-# ---------------------------------------------------------
 def generate_chinese_audio_sync_wrapper(text, gender, output_path):
-    """
-    建立一個全新的 Event Loop 來執行 Edge-TTS，
-    避免與 Streamlit 的 Loop 衝突導致 'No audio received'。
-    如果 Edge-TTS 失敗，自動降級使用 gTTS。
-    """
     voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
-    
     async def _run_edge():
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(output_path)
-
     try:
-        # 強制建立新 Loop 執行
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_run_edge())
         loop.close()
     except Exception as e:
-        print(f"Edge-TTS 失敗 ({e})，切換至 gTTS...")
-        # 降級方案：使用 gTTS (只有女聲)
+        print(f"Edge-TTS Error: {e}")
         tts = gTTS(text=text, lang='zh-tw')
         tts.save(output_path)
 
 # ---------------------------------------------------------
+# 🔧 關鍵修正：穩定的 API 呼叫邏輯
+# ---------------------------------------------------------
+def synthesize_indigenous_speech(tribe, speaker, text, retries=2):
+    """
+    專門處理族語合成，包含強制切換族群與重試機制。
+    """
+    for attempt in range(retries):
+        try:
+            # 1. 每次合成都重新建立連線，確保 Session 乾淨 (雖然慢但最穩)
+            client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
+            
+            # 2. 繞過驗證
+            bypass_client_validation(client, speaker)
+            
+            # 3. 強制切換族群並等待 (關鍵!)
+            # 告訴 Server: "我現在是這個族喔！"
+            client.predict(ethnicity=tribe, api_name="/lambda")
+            
+            # 4. 關鍵等待：給 Server 1秒鐘去載入模型
+            # 如果不等待，Server 還沒換好模型，就會用錯的聲音合成
+            time.sleep(1.0)
+            
+            # 5. 正式合成
+            path = client.predict(ref=speaker, gen_text_input=text, api_name="/default_speaker_tts")
+            return path
+            
+        except Exception as e:
+            print(f"合成失敗 (嘗試 {attempt+1}/{retries}): {e}")
+            time.sleep(2) # 失敗後休息久一點再試
+            
+    raise Exception(f"無法合成 {tribe} 的聲音，請稍後再試。")
+
+# ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-003: 原住民族語生成器", layout="wide")
-st.title("🎙️ Podcast-003: 原住民族語生成器")
-st.caption("版本功能：單句合成 | 雙語對話 (男/女聲) | 長文有聲書 | 專案存檔 | 穩定性修復")
+st.set_page_config(page_title="Podcast-004: 原住民族語生成器", layout="wide")
+st.title("🎙️ Podcast-004: 原住民族語生成器")
+st.caption("版本功能：穩定版合成核心 | 雙語對話 | 長文有聲書 | 專案存檔")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = [
@@ -149,13 +160,10 @@ with tab1:
             st.warning("請輸入文字")
         else:
             try:
-                with st.spinner("生成中..."):
-                    client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
-                    bypass_client_validation(client, s_speaker)
-                    try: client.predict(ethnicity=s_tribe, api_name="/lambda")
-                    except: pass
-                    result = client.predict(ref=s_speaker, gen_text_input=text_clean, api_name="/default_speaker_tts")
-                    st.audio(result)
+                with st.spinner("生成中 (同步模型狀態)..."):
+                    # 使用新的穩定合成函式
+                    path = synthesize_indigenous_speech(s_tribe, s_speaker, text_clean)
+                    st.audio(path)
             except Exception as e:
                 st.error(f"錯誤: {e}")
 
@@ -265,17 +273,15 @@ with tab2:
                 progress = st.progress(0)
                 status = st.empty()
                 clips = []
-                client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 
                 for idx, item in enumerate(dialogue):
                     txt = clean_text(item['text'])
                     if not txt: continue
                     
-                    status.text(f"合成 #{idx+1} {item['tribe']}語...")
-                    bypass_client_validation(client, item['speaker'])
-                    try: client.predict(ethnicity=item['tribe'], api_name="/lambda")
-                    except: pass
-                    path = client.predict(ref=item['speaker'], gen_text_input=txt, api_name="/default_speaker_tts")
+                    status.text(f"合成 #{idx+1} [族語] {item['tribe']}...")
+                    
+                    # 使用穩定版合成
+                    path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
                     
                     clip = AudioFileClip(path)
                     clips.append(clip)
@@ -336,31 +342,25 @@ with tab3:
                 progress = st.progress(0)
                 status = st.empty()
                 clips = []
-                client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
                 
                 for idx, item in enumerate(dialogue):
                     txt = clean_text(item['text'])
                     zh = clean_text(item.get('zh', ''))
                     if not txt: continue
                     
-                    # 1. 族語
-                    status.text(f"合成 #{idx+1} [族語]...")
-                    bypass_client_validation(client, item['speaker'])
-                    try: client.predict(ethnicity=item['tribe'], api_name="/lambda")
-                    except: pass
-                    path = client.predict(ref=item['speaker'], gen_text_input=txt, api_name="/default_speaker_tts")
+                    # 1. 族語 (使用穩定版)
+                    status.text(f"合成 #{idx+1} [族語] {item['tribe']}...")
+                    path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
+                    
                     clip_ind = AudioFileClip(path)
                     clips.append(clip_ind)
                     
                     # 2. 中文 (如果有)
                     if zh:
                         status.text(f"合成 #{idx+1} [中文] ({zh_gender_val})...")
-                        
-                        # 間隔 (使用新版 AudioArrayClip)
                         gap = AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100)
                         clips.append(gap)
                         
-                        # 🔧 使用新的 Sync Wrapper 執行 Edge-TTS
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
                         generate_chinese_audio_sync_wrapper(zh, zh_gender_val, tmp_zh_path)
                         
@@ -424,14 +424,11 @@ with tab4:
             clips_l = []
             
             try:
-                client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
-                try: client.predict(ethnicity=long_tribe, api_name="/lambda")
-                except: pass
-                bypass_client_validation(client, long_speaker)
-
                 for idx, chunk in enumerate(chunks):
                     stat.text(f"合成第 {idx+1}/{len(chunks)} 段...")
-                    path = client.predict(ref=long_speaker, gen_text_input=chunk, api_name="/default_speaker_tts")
+                    
+                    # 使用穩定版合成
+                    path = synthesize_indigenous_speech(long_tribe, long_speaker, chunk)
                     
                     clip = AudioFileClip(path)
                     clips_l.append(clip)
@@ -440,7 +437,6 @@ with tab4:
                     silence = AudioArrayClip(np.zeros((int(44100 * 1.0), ch)), fps=44100)
                     clips_l.append(silence)
                     
-                    time.sleep(0.5)
                     prog.progress((idx + 1) / len(chunks))
                 
                 if clips_l:
