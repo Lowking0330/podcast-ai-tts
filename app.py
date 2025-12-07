@@ -8,7 +8,8 @@ import time
 import numpy as np
 import json
 import asyncio
-import edge_tts # 引入微軟強大的 TTS
+import edge_tts 
+from gtts import gTTS # 備用方案
 
 # ---------------------------------------------------------
 # 1. 資料設定與基礎函式
@@ -33,8 +34,21 @@ speaker_map = {
 }
 
 def clean_text(text):
+    """
+    修正版文字清洗：
+    1. 絕對保留阿美語的 "'" (格格音)
+    2. 將中文全形標點轉為半形 (避免 TTS 模型崩潰)
+    """
     if not text: return ""
+    
+    # 替換常見的全形標點為半形
+    text = text.replace("，", ",").replace("。", ".").replace("？", "?").replace("！", "!")
+    text = text.replace("：", ":").replace("；", ";").replace("（", "(").replace("）", ")")
+    
+    # 移除破折號等無法發音的符號，但保留 ' (阿美語關鍵)
     text = text.replace("―", " ").replace("—", " ").replace("…", " ")
+    
+    # 移除多餘空白
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -66,20 +80,39 @@ def split_long_text(text, max_chars=150):
         final_chunks.append(current_chunk.strip())
     return final_chunks
 
-# 非同步函式：使用 Edge-TTS 生成中文語音 (支援男女聲)
-async def generate_chinese_audio(text, gender, output_path):
-    # 設定語音角色
-    # zh-TW-HsiaoChenNeural = 女聲
-    # zh-TW-YunJheNeural = 男聲
+# ---------------------------------------------------------
+# 🔧 關鍵修正：更穩定的中文語音生成函式
+# ---------------------------------------------------------
+def generate_chinese_audio_sync_wrapper(text, gender, output_path):
+    """
+    建立一個全新的 Event Loop 來執行 Edge-TTS，
+    避免與 Streamlit 的 Loop 衝突導致 'No audio received'。
+    如果 Edge-TTS 失敗，自動降級使用 gTTS。
+    """
     voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    
+    async def _run_edge():
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(output_path)
+
+    try:
+        # 強制建立新 Loop 執行
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_run_edge())
+        loop.close()
+    except Exception as e:
+        print(f"Edge-TTS 失敗 ({e})，切換至 gTTS...")
+        # 降級方案：使用 gTTS (只有女聲)
+        tts = gTTS(text=text, lang='zh-tw')
+        tts.save(output_path)
 
 # ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-002: 原住民族語生成器", layout="wide")
-st.title("🎙️ Podcast-002: 原住民族語生成器")
+st.set_page_config(page_title="Podcast-003: 原住民族語生成器", layout="wide")
+st.title("🎙️ Podcast-003: 原住民族語生成器")
+st.caption("版本功能：單句合成 | 雙語對話 (男/女聲) | 長文有聲書 | 專案存檔 | 穩定性修復")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = [
@@ -88,7 +121,7 @@ if 'dialogue_list' not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# 3. 分頁定義 (更新：分成 Podcast I 和 II)
+# 3. 分頁定義
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "單句合成 (Single)", 
@@ -130,8 +163,6 @@ with tab1:
 # 共用函式：Podcast 列表編輯器
 # ==========================================
 def render_script_editor(key_prefix):
-    """ 渲染共用的劇本編輯器 UI """
-    # 存檔/讀取
     with st.expander("💾 專案存檔與讀取", expanded=False):
         c_save, c_load = st.columns(2)
         with c_save:
@@ -146,7 +177,6 @@ def render_script_editor(key_prefix):
                     st.rerun()
                 except: st.error("格式錯誤")
 
-    # 快速匯入
     with st.expander("⚡ 快速劇本匯入", expanded=False):
         st.caption("格式： `A: 族語 | 中文`")
         c_r1, c_r2 = st.columns(2)
@@ -187,7 +217,6 @@ def render_script_editor(key_prefix):
             
     st.markdown("---")
     
-    # 列表顯示
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container():
             col_idx, col_set, col_text, col_zh, col_del = st.columns([0.5, 2.5, 3.5, 3, 0.5])
@@ -221,7 +250,7 @@ with tab2:
     st.subheader("Podcast I (全族語模式)")
     st.caption("此模式僅合成「族語」部分，適合製作沉浸式母語節目。")
     
-    render_script_editor("p1") # 呼叫共用編輯器
+    render_script_editor("p1")
     
     with st.expander("🎵 背景音樂設定", expanded=True):
         bgm_file_1 = st.file_uploader("上傳 BGM", type=["mp3", "wav"], key="bgm_1")
@@ -326,16 +355,18 @@ with tab3:
                     # 2. 中文 (如果有)
                     if zh:
                         status.text(f"合成 #{idx+1} [中文] ({zh_gender_val})...")
-                        # 間隔
+                        
+                        # 間隔 (使用新版 AudioArrayClip)
                         gap = AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100)
                         clips.append(gap)
                         
-                        # Edge-TTS 生成
+                        # 🔧 使用新的 Sync Wrapper 執行 Edge-TTS
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
-                        asyncio.run(generate_chinese_audio(zh, zh_gender_val, tmp_zh_path))
+                        generate_chinese_audio_sync_wrapper(zh, zh_gender_val, tmp_zh_path)
                         
-                        clip_zh = AudioFileClip(tmp_zh_path)
-                        clips.append(clip_zh)
+                        if os.path.exists(tmp_zh_path):
+                            clip_zh = AudioFileClip(tmp_zh_path)
+                            clips.append(clip_zh)
                     
                     # 句尾大間隔
                     end_gap = AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100)
