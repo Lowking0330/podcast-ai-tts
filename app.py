@@ -1,6 +1,7 @@
 import streamlit as st
 from gradio_client import Client
-from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioClip
+# 1. 修正 Import: 加入 AudioArrayClip
+from moviepy.editor import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
 import os
 import re
 import tempfile
@@ -64,7 +65,7 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 2. 介面初始化 (Setup)
+# 2. 介面初始化
 # ---------------------------------------------------------
 st.set_page_config(page_title="原住民族語 Podcast 生成器", layout="wide")
 st.title("臺灣原住民族語 Podcast 生成器 🎙️")
@@ -76,7 +77,7 @@ if 'dialogue_list' not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# 3. 分頁定義 (Tab Definitions) - 這裡就是剛剛缺少的關鍵！
+# 3. 分頁定義
 # ---------------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["單句測試 (Single)", "Podcast 對話 (Dialogue)", "長文有聲書 (Audiobook)"])
 
@@ -110,12 +111,11 @@ with tab1:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 2: Podcast 對話 (優化版：快速匯入 + BGM + 1秒延遲)
+# 分頁 2: Podcast 對話 (修復靜音問題)
 # ==========================================
 with tab2:
     st.subheader("Podcast 對話腳本編輯器")
     
-    # --- ⚡ 快速劇本匯入區 ---
     with st.expander("⚡ 快速劇本匯入 (大量輸入專用)", expanded=False):
         st.caption("設定好角色代號 (A, B)，直接貼上對話，省去一筆一筆選擇的時間。")
         c_role1, c_role2 = st.columns(2)
@@ -149,22 +149,17 @@ with tab2:
                 st.session_state['dialogue_list'].extend(new_entries)
                 st.success(f"成功匯入 {len(new_entries)} 句！")
                 st.rerun()
-                
         if c_imp2.button("🗑️ 清空列表"):
             st.session_state['dialogue_list'] = []
             st.rerun()
 
     st.markdown("---")
 
-    # --- BGM 設定區 ---
-    with st.expander("🎵 背景音樂設定 (BGM Settings)", expanded=False):
-        col_bgm1, col_bgm2 = st.columns([3, 1])
-        with col_bgm1:
-            bgm_file_d = st.file_uploader("上傳背景音樂", type=["mp3", "wav"], key="bgm_d")
-        with col_bgm2:
-            bgm_vol_d = st.slider("音樂音量", 0.05, 0.5, 0.15, 0.05, key="vol_d")
+    with st.expander("🎵 背景音樂設定", expanded=False):
+        c_b1, c_b2 = st.columns([3, 1])
+        with c_b1: bgm_file_d = st.file_uploader("上傳背景音樂", type=["mp3", "wav"], key="bgm_d")
+        with c_b2: bgm_vol_d = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_d")
 
-    # --- 腳本列表顯示 ---
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container():
             col_idx, col_tribe, col_spk, col_text, col_del = st.columns([0.5, 2, 3, 6, 0.5])
@@ -177,7 +172,6 @@ with tab2:
             except: idx_sp = 0
             new_speaker = col_spk.selectbox("語者", avail_spks, key=f"d_sp_{i}", index=idx_sp, label_visibility="collapsed")
             new_text = col_text.text_input("台詞", value=line['text'], key=f"d_tx_{i}", label_visibility="collapsed")
-            
             if col_del.button("❌", key=f"d_dl_{i}"):
                 st.session_state['dialogue_list'].pop(i)
                 st.rerun()
@@ -189,7 +183,7 @@ with tab2:
         st.session_state['dialogue_list'].append(last.copy())
         st.rerun()
 
-    if c_run.button("🎙️ 開始合成 Podcast (含 1秒間隔)", type="primary"):
+    if c_run.button("🎙️ 開始合成 Podcast", type="primary"):
         dialogue = st.session_state['dialogue_list']
         if not dialogue:
             st.warning("腳本是空的！")
@@ -216,15 +210,17 @@ with tab2:
                     clip = AudioFileClip(audio_path)
                     audio_clips.append(clip)
                     
-                    # 加入 1 秒靜音
+                    # 💡 修正後的核心：更安全的靜音產生方式
                     ch = clip.nchannels 
-                    silence = AudioClip(lambda t: np.zeros((len(t), ch)), duration=1.0, fps=44100)
+                    # 建立 1 秒鐘的 0 數據陣列
+                    silence_array = np.zeros((int(44100 * 1.0), ch))
+                    silence = AudioArrayClip(silence_array, fps=44100)
                     audio_clips.append(silence)
                     
                     progress_bar.progress((idx + 1) / len(dialogue))
 
                 if audio_clips:
-                    status_text.text("合成完成，正在接合...")
+                    status_text.text("接合中...")
                     voice_track = concatenate_audioclips(audio_clips)
                     
                     final_output = voice_track
@@ -255,7 +251,7 @@ with tab2:
                 st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 3: 長文有聲書 (含 BGM + 1秒延遲)
+# 分頁 3: 長文有聲書 (修復靜音問題)
 # ==========================================
 with tab3:
     st.subheader("長文有聲書製作")
@@ -294,9 +290,10 @@ with tab3:
                     clip = AudioFileClip(path)
                     clips_l.append(clip)
                     
-                    # 加入 1 秒靜音
-                    ch = clip.nchannels
-                    silence = AudioClip(lambda t: np.zeros((len(t), ch)), duration=1.0, fps=44100)
+                    # 💡 修正後的核心：更安全的靜音產生方式
+                    ch = clip.nchannels 
+                    silence_array = np.zeros((int(44100 * 1.0), ch))
+                    silence = AudioArrayClip(silence_array, fps=44100)
                     clips_l.append(silence)
                     
                     time.sleep(0.5)
