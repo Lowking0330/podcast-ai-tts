@@ -105,60 +105,6 @@ def synthesize_indigenous_speech(tribe, speaker, text):
     return path
 
 # ---------------------------------------------------------
-# Excel/Txt 處理
-# ---------------------------------------------------------
-def convert_df_to_excel(dialogue_list):
-    df = pd.DataFrame(dialogue_list)
-    df = df.rename(columns={'tribe': '族群', 'speaker': '語者', 'text': '族語內容', 'zh': '中文翻譯'})
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Script')
-    return output.getvalue()
-
-def convert_list_to_txt(dialogue_list):
-    txt_content = ""
-    for item in dialogue_list:
-        zh_part = f" | {item.get('zh', '')}" if item.get('zh') else ""
-        txt_content += f"{item['text']}{zh_part}\n"
-    return txt_content
-
-def parse_uploaded_file(uploaded_file):
-    try:
-        filename = uploaded_file.name
-        new_data = []
-        default_tribe = '阿美'
-        default_speaker = '阿美_秀姑巒_女聲1'
-
-        if filename.endswith('.xlsx'):
-            df = pd.read_excel(uploaded_file)
-            for _, row in df.iterrows():
-                tribe = row.get('族群') or row.get('tribe') or default_tribe
-                speaker = row.get('語者') or row.get('speaker') or default_speaker
-                text = row.get('族語內容') or row.get('text') or ''
-                zh = row.get('中文翻譯') or row.get('zh') or ''
-                if pd.notna(text) and str(text).strip():
-                    new_data.append({
-                        'tribe': str(tribe), 'speaker': str(speaker),
-                        'text': str(text), 'zh': str(zh) if pd.notna(zh) else ""
-                    })
-        elif filename.endswith('.txt'):
-            stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
-            for line in stringio:
-                line = line.strip()
-                if not line: continue
-                parts = line.split('|')
-                raw = parts[0].strip()
-                zh = parts[1].strip() if len(parts) > 1 else ""
-                new_data.append({
-                    'tribe': default_tribe, 'speaker': default_speaker,
-                    'text': raw, 'zh': zh
-                })
-        return new_data
-    except Exception as e:
-        st.error(f"檔案解析失敗: {e}")
-        return None
-
-# ---------------------------------------------------------
 # 🔧 AI 腳本生成函式 (RAG Core)
 # ---------------------------------------------------------
 def read_pdf(file):
@@ -168,16 +114,17 @@ def read_pdf(file):
         text += page.extract_text()
     return text
 
-def generate_script_with_gemini(api_key, context_text, topic, role_a_name="老師", role_b_name="學生"):
+def generate_script_with_gemini(api_key, context_text, topic, model_name, role_a_name="老師", role_b_name="學生"):
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 使用使用者選擇的模型
+        model = genai.GenerativeModel(model_name)
         
         prompt = f"""
         你是一位專業的廣播劇編劇。請根據以下提供的「參考資料」和「主題」，撰寫一段雙人對話劇本。
         
         【參考資料】：
-        {context_text[:5000]} (內容過長已截斷)
+        {context_text[:8000]} (已截斷以符合Token限制)
         
         【主題】：{topic}
         
@@ -214,8 +161,9 @@ def generate_script_with_gemini(api_key, context_text, topic, role_a_name="老�
 st.set_page_config(page_title="Podcast-015 AI", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
-    # ❌ 移除圖片，改用文字 Emoji 避免錯誤
-    st.header("🎙️ 原語 Podcast")
+    # ✅ 修正：使用純網址
+    st.image("[https://img.icons8.com/color/96/microphone.png](https://img.icons8.com/color/96/microphone.png)", width=80)
+    st.title("原語 Podcast")
     st.markdown("### 🇹🇼 臺灣原住民族語生成器")
     
     st.markdown("---")
@@ -283,13 +231,27 @@ with tab_ai:
         with c_ai2:
             role_a = st.text_input("角色 A (解說者)", value="老師")
             
+        # 🔧 更新模型選擇器：依照您的要求加入 3.0 與 2.5
+        model_choice = st.selectbox(
+            "選擇 AI 模型", 
+            [
+                "gemini-3-pro-preview", # 您的首選
+                "gemini-2.5-pro",       # 您的次選
+                "gemini-2.0-flash-exp", # 最新發布的 Flash
+                "gemini-1.5-pro",       # 穩定版 (保底)
+                "gemini-1.5-flash"      # 快速版
+            ],
+            index=0,
+            help="若出現 404 錯誤，代表您的帳號尚未開通該預覽版模型，請切換回 1.5 Pro。"
+        )
+            
     if st.button("🚀 AI 生成劇本", type="primary", disabled=not api_key, use_container_width=True):
         if not context_text:
             st.warning("請提供參考資料")
         else:
             try:
-                with st.spinner("AI 正在閱讀並撰寫劇本..."):
-                    script_data = generate_script_with_gemini(api_key, context_text, topic, role_a_name=role_a)
+                with st.spinner(f"正在使用 {model_choice} 生成劇本..."):
+                    script_data = generate_script_with_gemini(api_key, context_text, topic, model_choice, role_a_name=role_a)
                     st.session_state['dialogue_list'] = script_data
                     st.success(f"生成成功！共 {len(script_data)} 句。")
                     st.info("💡 請切換到「🎙️ 開始合成」分頁查看結果。")
@@ -297,21 +259,21 @@ with tab_ai:
                         st.json(script_data)
             except Exception as e:
                 st.error(f"生成失敗: {e}")
+                st.caption(f"錯誤提示：如果您選用了 {model_choice} 卻失敗，請嘗試切換至 gemini-1.5-pro。")
 
 # ==========================================
-# 分頁 2: TTS 合成 (沿用 Podcast II 邏輯)
+# 分頁 2: TTS 合成
 # ==========================================
 with tab_tts:
     st.markdown("### 步驟 2：檢查並合成語音")
     
-    # 簡易編輯器
     if not st.session_state['dialogue_list']:
         st.info("👋 請先在「🤖 AI 寫劇本」分頁生成內容，或在此手動輸入。")
         
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container(border=True):
             c1, c2, c3 = st.columns([2, 3, 3])
-            c1.write(f"**#{i+1} {line['speaker'].split('_')[1]}**") # 顯示身分
+            c1.write(f"**#{i+1} {line['speaker'].split('_')[1]}**") 
             line['text'] = c2.text_input("族語", line['text'], key=f"ai_tx_{i}", label_visibility="collapsed")
             line['zh'] = c3.text_input("中文", line.get('zh',''), key=f"ai_zh_{i}", label_visibility="collapsed")
 
