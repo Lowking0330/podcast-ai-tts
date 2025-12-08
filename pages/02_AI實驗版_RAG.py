@@ -152,15 +152,15 @@ def generate_script_with_gemini(api_key, context_text, topic, model_name, role_a
         return json.loads(clean_json)
         
     except Exception as e:
-        raise Exception(f"AI 生成失敗 ({model_name}): {e}")
+        raise Exception(f"AI 生成失敗: {e}")
 
 # ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-015 AI", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Podcast-016 AI", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
-    # 純文字 Emoji，避免圖片錯誤
+    # ✅ 修正：移除 st.image，改用純文字 Header 避免錯誤
     st.header("🎙️ 原語 Podcast")
     st.markdown("### 🇹🇼 臺灣原住民族語生成器")
     
@@ -229,17 +229,17 @@ with tab_ai:
         with c_ai2:
             role_a = st.text_input("角色 A (解說者)", value="老師")
             
-        # 🔧 修正：使用更穩定的模型名稱
+        # 🔧 修正：預設使用最穩定的 1.5-flash，避免 404/429 錯誤
         model_choice = st.selectbox(
             "選擇 AI 模型", 
             [
-                "gemini-1.5-flash-latest", # 推薦：通常最穩定
-                "gemini-1.5-flash",        # 備選
-                "gemini-1.5-pro",          # Pro 版
-                "gemini-1.0-pro"           # 舊版保底
+                "gemini-1.5-flash",     # 首選：最快、免費、最穩定
+                "gemini-1.5-pro",       # 次選：更聰明，但可能較慢
+                "gemini-2.0-flash-exp", # 實驗版：可能有新功能但較不穩
+                "gemini-1.0-pro"        # 保底版
             ],
             index=0,
-            help="若出現 404 錯誤，請嘗試切換至其他模型。"
+            help="建議使用 1.5-flash 以獲得最佳速度與穩定性。"
         )
             
     if st.button("🚀 AI 生成劇本", type="primary", disabled=not api_key, use_container_width=True):
@@ -256,11 +256,7 @@ with tab_ai:
                         st.json(script_data)
             except Exception as e:
                 st.error(f"生成失敗: {e}")
-                st.markdown("""
-                **故障排除建議：**
-                1. 請確認 `requirements.txt` 中已加入 `google-generativeai>=0.8.3` 並已 **Reboot App**。
-                2. 您的 API Key 可能沒有權限使用該模型，請切換至 `gemini-1.5-flash` 再試一次。
-                """)
+                st.markdown("**故障排除：** 請確認 Requirements 已更新，或嘗試切換至 gemini-1.5-flash。")
 
 # ==========================================
 # 分頁 2: TTS 合成
