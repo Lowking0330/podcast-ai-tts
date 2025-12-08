@@ -13,7 +13,6 @@ from gtts import gTTS
 import pandas as pd
 import io
 import shutil
-# 1. 新增 RAG 相關套件
 import google.generativeai as genai
 import PyPDF2
 
@@ -203,7 +202,6 @@ def generate_script_with_gemini(api_key, context_text, topic, role_a_name="老�
         """
         
         response = model.generate_content(prompt)
-        # 清理可能的回傳格式
         clean_json = response.text.strip().replace("```json", "").replace("```", "")
         return json.loads(clean_json)
         
@@ -216,413 +214,168 @@ def generate_script_with_gemini(api_key, context_text, topic, role_a_name="老�
 st.set_page_config(page_title="Podcast-015 AI", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
+    # 🔧 修正圖片格式：移除 Markdown 語法，直接使用字串
     st.image("[https://img.icons8.com/color/96/microphone.png](https://img.icons8.com/color/96/microphone.png)", width=80)
     st.title("原語 Podcast")
     st.markdown("### 🇹🇼 臺灣原住民族語生成器")
     
     st.markdown("---")
-    st.markdown("### 🌟 功能簡介")
+    st.markdown("### 🌟 功能簡介 (AI版)")
     st.info("""
-    **1. 💬 單句合成** 快速測試發音。
-    **2. 🎧 Podcast I** 全族語廣播。
-    **3. 🏫 Podcast II** 雙語教學教材。
-    **4. 📖 長文有聲書** 自動切分朗讀。
-    **5. 🤖 AI 寫劇本** (新!) 讀資料自動寫對話。
+    **🧪 AI實驗版功能**：
+    
+    **1. 🤖 AI 寫劇本** 結合 Google Gemini，讀取 PDF 或文字資料，自動撰寫對話腳本。
+    
+    **2. 🎙️ 雙語合成**
+    自動帶入生成的腳本進行合成。
     """)
     
-    # AI Key 設定區
     st.markdown("---")
-    st.markdown("#### 🔑 AI 設定 (RAG)")
+    st.markdown("#### 🔑 AI 設定")
     if 'gemini_key' not in st.session_state:
         st.session_state['gemini_key'] = ''
     
-    user_key = st.text_input("Google Gemini API Key", value=st.session_state['gemini_key'], type="password", help="請至 Google AI Studio 申請免費 Key")
+    user_key = st.text_input("Gemini API Key", value=st.session_state['gemini_key'], type="password")
     if user_key:
         st.session_state['gemini_key'] = user_key
         st.success("API Key 已設定")
 
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-015 | 核心: Free Tier")
 
-st.title("🎙️ 族語Podcast內容產製程式")
-st.markdown("打造您的專屬原住民族語廣播節目，支援 **16族42語**、**雙語教學** 與 **AI 自動生成**。")
+st.title("🧪 AI 實驗室：智慧劇本生成")
+st.markdown("結合 **RAG (檢索增強生成)** 技術，讓 AI 讀懂資料，自動產出族語廣播劇。")
 
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = []
 
 # ---------------------------------------------------------
-# 3. 分頁定義 (新增 Tab 5)
+# 3. 分頁定義
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "💬 單句合成", 
-    "🎧 Podcast (全族語)", 
-    "🏫 Podcast (雙語教學)", 
-    "📖 長文有聲書",
-    "🤖 AI 寫劇本 (RAG)"
-])
+tab_ai, tab_tts = st.tabs(["🤖 AI 寫劇本 (RAG)", "🎙️ 開始合成 (TTS)"])
 
 # ==========================================
-# 分頁 1: 單句合成
+# 分頁 1: AI 寫劇本 (RAG)
 # ==========================================
-with tab1:
-    st.markdown("### 💬 單句語音測試")
-    if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single"):
-        st.session_state['s1_tribe_idx'] = 0 
-        st.session_state['s1_speaker_idx'] = 4 
-        st.session_state['s1_text_val'] = "Nga'ay ho! Kicey kiso haw?" 
-        st.rerun()
-
-    def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
+with tab_ai:
+    st.markdown("### 步驟 1：提供資料讓 AI 寫劇本")
     
-    with st.container(border=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            s_tribe = st.selectbox("選擇族群", list(speaker_map.keys()), key="s1_tribe", index=def_tribe_idx)
-        with c2:
-            avail_spks = speaker_map[s_tribe]
-            if 's1_speaker_idx' in st.session_state:
-                def_spk_idx = st.session_state['s1_speaker_idx']
-            elif s_tribe == '阿美': def_spk_idx = 4
-            else: def_spk_idx = 0
-            
-            if def_spk_idx >= len(avail_spks): def_spk_idx = 0
-            s_speaker = st.selectbox("選擇語者", avail_spks, key="s1_speaker", index=def_spk_idx)
-        
-        def_text = st.session_state.get('s1_text_val', "")
-        s_text = st.text_area("輸入族語文字", value=def_text, height=120)
-        
-        if st.button("🔊 生成語音", type="primary", use_container_width=True):
-            if not s_text: st.warning("請輸入文字")
-            else:
-                try:
-                    with st.spinner(f"正在合成 ({s_tribe})..."):
-                        path = synthesize_indigenous_speech(s_tribe, s_speaker, clean_text(s_text))
-                        st.audio(path)
-                except Exception as e: st.error(f"錯誤: {e}")
-
-# ==========================================
-# 共用列表編輯器
-# ==========================================
-def render_script_editor(key_prefix):
-    if st.button("✨ 載入範例劇本 (秀姑巒阿美)", key=f"{key_prefix}_ex", use_container_width=True):
-        st.session_state['dialogue_list'] = [
-            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
-            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"},
-            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Hai, maolah misa'osi kako.", "zh": "對，我很喜歡讀書。"},
-            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Aray!", "zh": "謝謝！"}
-        ]
-        st.rerun()
-
-    with st.expander("📂 專案存檔/讀取", expanded=False):
-        c_save, c_load = st.columns(2)
-        with c_save:
-            if st.session_state['dialogue_list']:
-                excel_data = convert_df_to_excel(st.session_state['dialogue_list'])
-                st.download_button("📥 下載 Excel", excel_data, "podcast_script.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"{key_prefix}_dl_excel", use_container_width=True)
-            else: st.info("列表為空")
-        with c_load:
-            uploaded = st.file_uploader("上傳 .xlsx/.txt", type=["xlsx", "txt"], key=f"{key_prefix}_up")
-            if uploaded and st.button("載入", key=f"{key_prefix}_load", use_container_width=True):
-                data = parse_uploaded_file(uploaded)
-                if data:
-                    st.session_state['dialogue_list'] = data
-                    st.success(f"載入 {len(data)} 筆！")
-                    time.sleep(1)
-                    st.rerun()
-
-    with st.expander("⚡ 快速劇本貼上", expanded=False):
-        c_r1, c_r2 = st.columns(2)
-        with c_r1:
-            role_a_t = st.selectbox("A 族群", list(speaker_map.keys()), key=f"{key_prefix}_ra_t", index=0)
-            avail_a = speaker_map[role_a_t]
-            def_idx_a = 4 if role_a_t == '阿美' and len(avail_a) > 4 else 0
-            role_a_s = st.selectbox("A 語者", avail_a, key=f"{key_prefix}_ra_s", index=def_idx_a)
-        with c_r2:
-            role_b_t = st.selectbox("B 族群", list(speaker_map.keys()), key=f"{key_prefix}_rb_t", index=0)
-            avail_b = speaker_map[role_b_t]
-            def_idx_b = 4 if role_b_t == '阿美' and len(avail_b) > 4 else 0
-            role_b_s = st.selectbox("B 語者", avail_b, key=f"{key_prefix}_rb_s", index=def_idx_b)
-
-        script_in = st.text_area("貼上劇本 (A: 族語 | 中文)", height=100, key=f"{key_prefix}_txt")
-        if st.button("🚀 解析並追加", key=f"{key_prefix}_btn_imp", use_container_width=True):
-            if script_in.strip():
-                lines = script_in.split('\n')
-                new_items = []
-                for line in lines:
-                    line = line.strip()
-                    if not line: continue
-                    parts = line.split('|')
-                    raw = parts[0].strip()
-                    zh = parts[1].strip() if len(parts)>1 else ""
-                    entry = {"tribe": role_a_t, "speaker": role_a_s, "text": "", "zh": zh}
-                    if raw.upper().startswith("A:") or raw.startswith("A："):
-                        entry.update({"text": raw[2:].strip(), "tribe": role_a_t, "speaker": role_a_s})
-                    elif raw.upper().startswith("B:") or raw.startswith("B："):
-                        entry.update({"text": raw[2:].strip(), "tribe": role_b_t, "speaker": role_b_s})
-                    else: entry["text"] = raw
-                    new_items.append(entry)
-                st.session_state['dialogue_list'].extend(new_items)
-                st.rerun()
-            
-    st.markdown("---")
-    if not st.session_state['dialogue_list']:
-        st.info("👋 列表是空的，請載入範例或新增。")
-
-    for i, line in enumerate(st.session_state['dialogue_list']):
-        with st.container(border=True):
-            col_idx, col_set, col_text, col_zh, col_del = st.columns([0.3, 2.7, 3.5, 3, 0.5])
-            col_idx.write(f"**#{i+1}**")
-            with col_set:
-                try: idx_tr = list(speaker_map.keys()).index(line['tribe'])
-                except: idx_tr = 0
-                nt = st.selectbox("族", list(speaker_map.keys()), key=f"{key_prefix}_tr_{i}", index=idx_tr, label_visibility="collapsed")
-                avail = speaker_map[nt]
-                try: idx_sp = avail.index(line['speaker'])
-                except: idx_sp = 0
-                ns = st.selectbox("語", avail, key=f"{key_prefix}_sp_{i}", index=idx_sp, label_visibility="collapsed")
-            
-            ntx = col_text.text_input("族語", value=line['text'], key=f"{key_prefix}_tx_{i}", label_visibility="collapsed")
-            nzh = col_zh.text_input("中文", value=line.get('zh',''), key=f"{key_prefix}_zh_{i}", label_visibility="collapsed")
-            if col_del.button("🗑️", key=f"{key_prefix}_dl_{i}"):
-                st.session_state['dialogue_list'].pop(i)
-                st.rerun()
-            st.session_state['dialogue_list'][i].update({'tribe': nt, 'speaker': ns, 'text': ntx, 'zh': nzh})
-
-    c_add, c_clr = st.columns([4, 1])
-    if c_add.button("➕ 新增一行", key=f"{key_prefix}_add", use_container_width=True):
-        last = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "", "zh": ""}
-        st.session_state['dialogue_list'].append(last.copy())
-        st.rerun()
-    if c_clr.button("🗑️ 清空", key=f"{key_prefix}_clr"):
-        st.session_state['dialogue_list'] = []
-        st.rerun()
-
-# ==========================================
-# 分頁 2 & 3: Podcast 功能
-# ==========================================
-with tab2:
-    st.markdown("### 🎧 Podcast I (全族語模式)")
-    render_script_editor("p1")
-    with st.container(border=True):
-        bgm_file_1 = st.file_uploader("🎵 BGM", type=["mp3", "wav"], key="bgm_1")
-        bgm_vol_1 = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_1")
-    if st.button("🎙️ 開始製作 (全族語)", type="primary", key="run_p1", use_container_width=True):
-        dialogue = st.session_state['dialogue_list']
-        if not dialogue: st.warning("⚠️ 請先輸入劇本")
-        else:
-            try:
-                progress = st.progress(0)
-                status = st.status("🚀 製作中...", expanded=True)
-                clips = []
-                for idx, item in enumerate(dialogue):
-                    txt = clean_text(item['text'])
-                    if not txt: continue
-                    status.write(f"合成 #{idx+1} {item['tribe']}...")
-                    path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
-                    clip = AudioFileClip(path)
-                    clips.append(clip)
-                    clips.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100))
-                    progress.progress((idx+1)/len(dialogue))
-                if clips:
-                    status.write("🎵 混音中...")
-                    final = concatenate_audioclips(clips)
-                    if bgm_file_1:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                            tmp.write(bgm_file_1.getvalue())
-                            tpath = tmp.name
-                        music = AudioFileClip(tpath)
-                        if music.duration < final.duration:
-                            music = concatenate_audioclips([music] * (int(final.duration/music.duration)+1))
-                        music = music.subclipped(0, final.duration+1).with_volume_scaled(bgm_vol_1)
-                        final = CompositeAudioClip([music, final])
-                        os.remove(tpath)
-                    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                    final.write_audiofile(tf.name, logger=None, fps=44100)
-                    for c in clips: c.close()
-                    final.close()
-                    status.update(label="✅ 完成！", state="complete", expanded=False)
-                    st.audio(tf.name)
-                    with open(tf.name, "rb") as f:
-                        st.download_button("📥 下載", f, "podcast_indigenous.mp3", "audio/mp3", use_container_width=True)
-            except Exception as e: st.error(f"錯誤: {e}")
-
-with tab3:
-    st.markdown("### 🏫 Podcast II (雙語教學模式)")
-    render_script_editor("p2")
-    with st.container(border=True):
-        c_set1, c_set2 = st.columns(2)
-        with c_set1:
-            bgm_file_2 = st.file_uploader("🎵 BGM", type=["mp3", "wav"], key="bgm_2")
-            bgm_vol_2 = st.slider("BGM音量", 0.05, 0.5, 0.15, 0.05, key="vol_2")
-        with c_set2:
-            zh_gender = st.radio("中文配音", ["女聲", "男聲"], index=0, horizontal=True)
-            gap_time = st.slider("翻譯間隔", 0.1, 2.0, 0.5)
-    if st.button("🎙️ 開始製作 (雙語)", type="primary", key="run_p2", use_container_width=True):
-        dialogue = st.session_state['dialogue_list']
-        if not dialogue: st.warning("⚠️ 請先輸入劇本")
-        else:
-            try:
-                progress = st.progress(0)
-                status = st.status("🚀 製作中...", expanded=True)
-                clips = []
-                for idx, item in enumerate(dialogue):
-                    txt = clean_text(item['text'])
-                    zh = clean_text(item.get('zh', ''))
-                    if not txt: continue
-                    status.write(f"合成 #{idx+1} 族語...")
-                    path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
-                    clip_ind = AudioFileClip(path)
-                    clips.append(clip_ind)
-                    if zh:
-                        status.write(f"合成 #{idx+1} 中文...")
-                        clips.append(AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100))
-                        tmp_zh_path = tempfile.mktemp(suffix=".mp3")
-                        success, _ = generate_chinese_audio_free_tier(zh, zh_gender, tmp_zh_path)
-                        if success and os.path.exists(tmp_zh_path):
-                            clips.append(AudioFileClip(tmp_zh_path))
-                    clips.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100))
-                    progress.progress((idx+1)/len(dialogue))
-                if clips:
-                    status.write("🎵 混音中...")
-                    final = concatenate_audioclips(clips)
-                    if bgm_file_2:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                            tmp.write(bgm_file_2.getvalue())
-                            tpath = tmp.name
-                        music = AudioFileClip(tpath)
-                        if music.duration < final.duration:
-                            music = concatenate_audioclips([music] * (int(final.duration/music.duration)+1))
-                        music = music.subclipped(0, final.duration+1).with_volume_scaled(bgm_vol_2)
-                        final = CompositeAudioClip([music, final])
-                        os.remove(tpath)
-                    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                    final.write_audiofile(tf.name, logger=None, fps=44100)
-                    for c in clips: c.close()
-                    final.close()
-                    status.update(label="✅ 完成！", state="complete", expanded=False)
-                    st.audio(tf.name)
-                    with open(tf.name, "rb") as f:
-                        st.download_button("📥 下載", f, "podcast_bilingual.mp3", "audio/mp3", use_container_width=True)
-            except Exception as e: st.error(f"錯誤: {e}")
-
-# ==========================================
-# 分頁 4: 長文有聲書
-# ==========================================
-with tab4:
-    st.markdown("### 📖 長文有聲書製作")
-    if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_long", use_container_width=True):
-        st.session_state['l_tribe_idx'] = 0 
-        st.session_state['l_speaker_idx'] = 4
-        st.session_state['l_text_val'] = "O kakalayan no 'Amis a tamdaw.\nItini i Taywan, adihay ko kasasiromaroma no yincumin." 
-        st.rerun()
-    def_l_idx = st.session_state.get('l_tribe_idx', 0)
-    with st.container(border=True):
-        c_l1, c_l2 = st.columns(2)
-        with c_l1: long_tribe = st.selectbox("朗讀族群", list(speaker_map.keys()), key="l_tr", index=def_l_idx)
-        with c_l2: 
-            avail = speaker_map[long_tribe]
-            def_l_s_idx = st.session_state.get('l_speaker_idx', 0)
-            if 'l_speaker_idx' not in st.session_state and long_tribe=='阿美': def_l_s_idx = 4
-            if def_l_s_idx >= len(avail): def_l_s_idx = 0
-            long_speaker = st.selectbox("朗讀語者", avail, key="l_sp", index=def_l_s_idx)
-        def_l_text = st.session_state.get('l_text_val', "")
-        long_text = st.text_area("貼上文章 (自動切分)", value=def_l_text, height=200)
-        c_b3, c_b4 = st.columns([3, 1])
-        with c_b3: bgm_file_l = st.file_uploader("BGM", type=["mp3", "wav"], key="bgm_l")
-        with c_b4: bgm_vol_l = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_l")
-    if st.button("📖 開始製作", type="primary", use_container_width=True):
-        if not long_text.strip(): st.warning("⚠️ 請先輸入文字")
-        else:
-            chunks = split_long_text(clean_text(long_text), 120)
-            st.info(f"ℹ️ 切分為 {len(chunks)} 段...")
-            progress = st.progress(0)
-            status = st.status("🚀 朗讀中...", expanded=True)
-            clips_l = []
-            try:
-                for idx, chunk in enumerate(chunks):
-                    status.write(f"朗讀段落 {idx+1}/{len(chunks)}...")
-                    path = synthesize_indigenous_speech(long_tribe, long_speaker, chunk)
-                    clip = AudioFileClip(path)
-                    clips_l.append(clip)
-                    clips_l.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100))
-                    progress.progress((idx + 1) / len(chunks))
-                if clips_l:
-                    status.write("🎵 混音中...")
-                    voice_trk = concatenate_audioclips(clips_l)
-                    final_out = voice_trk
-                    if bgm_file_l:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                            tmp.write(bgm_file_l.getvalue())
-                            tmppath = tmp.name
-                        mtrk = AudioFileClip(tmppath)
-                        if mtrk.duration < voice_trk.duration:
-                            mtrk = concatenate_audioclips([mtrk]*int(voice_trk.duration/mtrk.duration+2))
-                        mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
-                        final_out = CompositeAudioClip([mtrk, voice_trk])
-                        os.remove(tmppath)
-                    tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                    final_out.write_audiofile(tmpf.name, logger=None, fps=44100)
-                    for c in clips_l: c.close()
-                    final_out.close()
-                    status.update(label="✅ 完成！", state="complete", expanded=False)
-                    st.audio(tmpf.name)
-                    with open(tmpf.name, "rb") as f:
-                        st.download_button("📥 下載", f, "audiobook.mp3", "audio/mp3", use_container_width=True)
-            except Exception as e: st.error(f"❌ 錯誤: {e}")
-
-# ==========================================
-# 分頁 5: AI 寫劇本 (RAG)
-# ==========================================
-with tab5:
-    st.markdown("### 🤖 AI 自動寫劇本 (RAG)")
-    st.caption("上傳 PDF 或貼上文字，AI 自動幫您寫成雙人廣播劇腳本。")
-    
-    # 檢查 API Key
     api_key = st.session_state.get('gemini_key', '')
     if not api_key:
-        st.warning("⚠️ 請先在左側側邊欄輸入 Google Gemini API Key")
+        st.warning("⚠️ 請先在左側輸入 Google Gemini API Key")
     
     with st.container(border=True):
-        # 1. 資料來源
         input_method = st.radio("資料來源", ["貼上文字", "上傳 PDF"], horizontal=True)
         
         context_text = ""
         if input_method == "貼上文字":
-            context_text = st.text_area("請貼上參考資料", height=200, placeholder="貼上部落故事、新聞或文化介紹...")
+            context_text = st.text_area("參考資料", height=200, placeholder="貼上部落故事、新聞或文化介紹...")
         else:
-            uploaded_pdf = st.file_uploader("上傳 PDF 文件", type="pdf")
+            uploaded_pdf = st.file_uploader("上傳 PDF", type="pdf")
             if uploaded_pdf:
                 try:
                     context_text = read_pdf(uploaded_pdf)
                     st.success(f"成功讀取 {len(context_text)} 字")
                 except: st.error("PDF 讀取失敗")
         
-        # 2. 設定
         c_ai1, c_ai2 = st.columns(2)
         with c_ai1:
             topic = st.text_input("劇本主題", value="請根據資料寫一段族語教學對話")
         with c_ai2:
-            role_a = st.text_input("角色 A 名稱", value="老師")
+            role_a = st.text_input("角色 A (解說者)", value="老師")
             
     if st.button("🚀 AI 生成劇本", type="primary", disabled=not api_key, use_container_width=True):
         if not context_text:
             st.warning("請提供參考資料")
         else:
             try:
-                with st.spinner("AI 正在閱讀資料並撰寫劇本中... (約需 10-20 秒)"):
-                    # 呼叫 Gemini
+                with st.spinner("AI 正在閱讀並撰寫劇本..."):
                     script_data = generate_script_with_gemini(api_key, context_text, topic, role_a_name=role_a)
-                    
-                    # 更新 Session State
                     st.session_state['dialogue_list'] = script_data
-                    
-                    st.success(f"成功生成 {len(script_data)} 句對話！")
-                    st.info("💡 劇本已自動載入。請切換到 **「🏫 Podcast II (雙語教學)」** 分頁進行合成。")
-                    
-                    # 預覽結果
-                    with st.expander("查看生成的劇本內容", expanded=True):
+                    st.success(f"生成成功！共 {len(script_data)} 句。")
+                    st.info("💡 請切換到「🎙️ 開始合成」分頁查看結果。")
+                    with st.expander("查看生成內容", expanded=True):
                         st.json(script_data)
-                        
             except Exception as e:
                 st.error(f"生成失敗: {e}")
+
+# ==========================================
+# 分頁 2: TTS 合成 (沿用 Podcast II 邏輯)
+# ==========================================
+with tab_tts:
+    st.markdown("### 步驟 2：檢查並合成語音")
+    
+    # 簡易編輯器
+    if not st.session_state['dialogue_list']:
+        st.info("👋 請先在「🤖 AI 寫劇本」分頁生成內容，或在此手動輸入。")
+        
+    for i, line in enumerate(st.session_state['dialogue_list']):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([2, 3, 3])
+            c1.write(f"**#{i+1} {line['speaker'].split('_')[1]}**") # 顯示身分
+            line['text'] = c2.text_input("族語", line['text'], key=f"ai_tx_{i}", label_visibility="collapsed")
+            line['zh'] = c3.text_input("中文", line.get('zh',''), key=f"ai_zh_{i}", label_visibility="collapsed")
+
+    with st.container(border=True):
+        c_set1, c_set2 = st.columns(2)
+        with c_set1:
+            bgm_file = st.file_uploader("背景音樂 (BGM)", type=["mp3", "wav"])
+            bgm_vol = st.slider("音量", 0.05, 0.5, 0.15, 0.05)
+        with c_set2:
+            zh_gender = st.radio("中文配音", ["女聲", "男聲"], index=0, horizontal=True)
+            gap_time = st.slider("翻譯間隔", 0.1, 2.0, 0.5)
+
+    if st.button("🎙️ 開始合成 (雙語模式)", type="primary", use_container_width=True):
+        dialogue = st.session_state['dialogue_list']
+        if not dialogue: st.warning("無內容")
+        else:
+            try:
+                progress = st.progress(0)
+                status = st.status("🚀 製作中...", expanded=True)
+                clips = []
+                
+                for idx, item in enumerate(dialogue):
+                    txt = clean_text(item['text'])
+                    zh = clean_text(item.get('zh', ''))
+                    if not txt: continue
+                    
+                    status.write(f"合成 #{idx+1} [族語]...")
+                    path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
+                    clip_ind = AudioFileClip(path)
+                    clips.append(clip_ind)
+                    
+                    if zh:
+                        status.write(f"合成 #{idx+1} [中文]...")
+                        clips.append(AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100))
+                        tmp_zh = tempfile.mktemp(suffix=".mp3")
+                        success, _ = generate_chinese_audio_free_tier(zh, zh_gender, tmp_zh)
+                        if success and os.path.exists(tmp_zh):
+                            clips.append(AudioFileClip(tmp_zh))
+                    
+                    clips.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100))
+                    progress.progress((idx+1)/len(dialogue))
+                
+                if clips:
+                    status.write("🎵 混音中...")
+                    final = concatenate_audioclips(clips)
+                    if bgm_file:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                            tmp.write(bgm_file.getvalue())
+                            tpath = tmp.name
+                        music = AudioFileClip(tpath)
+                        if music.duration < final.duration:
+                            music = concatenate_audioclips([music] * (int(final.duration/music.duration)+1))
+                        music = music.subclipped(0, final.duration+1).with_volume_scaled(bgm_vol)
+                        final = CompositeAudioClip([music, final])
+                        os.remove(tpath)
+                    
+                    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    final.write_audiofile(tf.name, logger=None, fps=44100)
+                    for c in clips: c.close()
+                    final.close()
+                    
+                    status.update(label="✅ 完成！", state="complete", expanded=False)
+                    st.audio(tf.name)
+                    with open(tf.name, "rb") as f:
+                        st.download_button("📥 下載 MP3", f, "ai_podcast.mp3", "audio/mp3", use_container_width=True)
+            except Exception as e: st.error(f"錯誤: {e}")
