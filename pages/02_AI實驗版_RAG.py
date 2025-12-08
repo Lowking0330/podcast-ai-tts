@@ -1,620 +1,302 @@
 import streamlit as st
-import pandas as pd
+from gradio_client import Client
+from moviepy import AudioFileClip, concatenate_audioclips, CompositeAudioClip, AudioArrayClip
+import os
 import re
+import tempfile
 import time
+import numpy as np
 import json
+import subprocess
+import sys
+from gtts import gTTS
+import pandas as pd
+import io
+import shutil
 import google.generativeai as genai
-from io import BytesIO
+import PyPDF2
 
-# ==========================================
-# 設定頁面資訊
-# ==========================================
-st.set_page_config(
-    page_title="太魯閣語構詞分析器 (Pro)",
-    page_icon="📖",
-    layout="wide"
-)
+# ---------------------------------------------------------
+# 1. 資料設定與基礎函式
+# ---------------------------------------------------------
+speaker_map = {
+    '阿美': ['阿美_海岸_男聲', '阿美_恆春_女聲', '阿美_馬蘭_女聲', '阿美_南勢_女聲', '阿美_秀姑巒_女聲1', '阿美_秀姑巒_女聲2'],
+    '泰雅': ['泰雅_四季_女聲', '泰雅_賽考利克_男聲', '泰雅_萬大_女聲', '泰雅_汶水_男聲', '泰雅_宜蘭澤敖利_女聲', '泰雅_澤敖利_男聲'],
+    '排灣': ['排灣_中_男聲', '排灣_東_男聲', '排灣_北_女聲', '排灣_南_女聲'],
+    '布農': ['布農_郡群_男聲', '布農_卡群_男聲', '布農_巒群_男聲', '布農_丹群_男聲', '布農_卓群_女聲'],
+    '太魯閣': ['太魯閣_女聲', '太魯閣_男聲1', '太魯閣_男聲2'],
+    '賽德克': ['賽德克_德鹿谷_女聲', '賽德克_都達_女聲', '賽德克_德固達雅_男聲', '賽德克_德固達雅_女聲'],
+    '魯凱': ['魯凱_大武_女聲', '魯凱_多納_男聲', '魯凱_東_女聲', '魯凱_茂林_男聲', '魯凱_萬山_女聲', '魯凱_霧台_女聲'],
+    '卑南': ['卑南_建和_女聲', '卑南_南王_女聲', '卑南_西群_女聲', '卑南_知本_女聲'],
+    '鄒': ['鄒_女聲'],
+    '賽夏': ['賽夏_女聲'],
+    '雅美': ['雅美_女聲'],
+    '邵': ['邵_男聲'],
+    '噶瑪蘭': ['噶瑪蘭_女聲'],
+    '拉阿魯哇': ['拉阿魯哇_女聲'],
+    '撒奇萊雅': ['撒奇萊雅_女聲'],
+    '卡那卡那富': ['卡那卡那富_男聲'],
+}
 
-# ==========================================
-# API Key 設定區塊
-# ==========================================
-apiKey = None
+def clean_text(text):
+    if not text: return ""
+    text = text.replace("，", ",").replace("。", ".").replace("？", "?").replace("！", "!")
+    text = text.replace("：", ":").replace("；", ";").replace("（", "(").replace("）", ")")
+    text = text.replace("―", " ").replace("—", " ").replace("…", " ")
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
-try:
-    if "GEMINI_API_KEY" in st.secrets:
-        apiKey = st.secrets["GEMINI_API_KEY"]
-except FileNotFoundError:
-    pass 
+def bypass_client_validation(client, speaker_id):
+    try:
+        target_endpoints = [client.endpoints.get('/default_speaker_tts'), client.endpoints.get('/custom_speaker_tts')]
+        for endpoint in target_endpoints:
+            if endpoint and hasattr(endpoint, 'parameters'):
+                for param in endpoint.parameters:
+                    if 'enum' in param and speaker_id not in param['enum']:
+                        param['enum'].append(speaker_id)
+                    if 'choices' in param and speaker_id not in param['choices']:
+                        param['choices'].append(speaker_id)
+    except Exception:
+        pass
 
-if not apiKey:
-    with st.sidebar:
-        st.markdown("### ⚙️ 系統設定")
-        user_api_input = st.text_input("請輸入 Google Gemini API Key", type="password")
-        if user_api_input:
-            apiKey = user_api_input
-        st.caption("ℹ️ 若無 API Key，僅能進行詞法拆解，無法使用整句翻譯。")
-        st.markdown("---")
+def split_long_text(text, max_chars=150):
+    chunks = re.split(r'([。.?!？！\n])', text)
+    final_chunks = []
+    current_chunk = ""
+    for chunk in chunks:
+        if len(current_chunk) + len(chunk) < max_chars:
+            current_chunk += chunk
+        else:
+            if current_chunk.strip():
+                final_chunks.append(current_chunk.strip())
+            current_chunk = chunk
+    if current_chunk.strip():
+        final_chunks.append(current_chunk.strip())
+    return final_chunks
+
+def generate_chinese_audio_free_tier(text, gender, output_path):
+    edge_voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
+    command = [
+        sys.executable, "-m", "edge_tts",
+        "--text", text,
+        "--voice", edge_voice,
+        "--write-media", output_path
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, timeout=10)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True, "Edge-TTS"
+    except: pass
+    
+    try:
+        tts = gTTS(text=text, lang='zh-tw')
+        tts.save(output_path)
+        is_downgrade = (gender == "男聲")
+        return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
+    except:
+        return False, "Error"
+
+def synthesize_indigenous_speech(tribe, speaker, text):
+    client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
+    bypass_client_validation(client, speaker)
+    client.predict(ethnicity=tribe, api_name="/lambda")
+    time.sleep(2.0)
+    path = client.predict(ref=speaker, gen_text_input=text, api_name="/default_speaker_tts")
+    return path
+
+# ---------------------------------------------------------
+# 🔧 AI 腳本生成函式 (RAG Core)
+# ---------------------------------------------------------
+def read_pdf(file):
+    pdf_reader = PyPDF2.PdfReader(file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text()
+    return text
+
+def generate_script_with_gemini(api_key, context_text, topic, model_name, role_a_name="老師", role_b_name="學生"):
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        
+        prompt = f"""
+        你是一位專業的廣播劇編劇。請根據以下提供的「參考資料」和「主題」，撰寫一段雙人對話劇本。
+        
+        【參考資料】：
+        {context_text[:8000]} (已截斷以符合Token限制)
+        
+        【主題】：{topic}
+        
+        【角色設定】：
+        - A: {role_a_name} (負責解說，使用阿美語)
+        - B: {role_b_name} (負責提問，使用阿美語)
+        
+        【輸出規則】：
+        1. 請輸出純 JSON 格式的列表 (List of Objects)。
+        2. 每個物件必須包含四個欄位：
+           - "tribe": 固定為 "阿美"
+           - "speaker": 固定為 "阿美_秀姑巒_女聲1"
+           - "text": 阿美語台詞 (請根據參考資料翻譯或創作，用羅馬拼音)
+           - "zh": 對應的中文翻譯
+        3. 不要輸出 Markdown 標記 (如 ```json)，只要純文字的 JSON。
+        
+        【範例格式】：
+        [
+            {{"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho!", "zh": "你好！"}},
+            {{"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"}}
+        ]
+        """
+        
+        response = model.generate_content(prompt)
+        clean_json = response.text.strip().replace("```json", "").replace("```", "")
+        return json.loads(clean_json)
+        
+    except Exception as e:
+        raise Exception(f"AI 生成失敗: {e}")
+
+# ---------------------------------------------------------
+# 2. 介面初始化
+# ---------------------------------------------------------
+st.set_page_config(page_title="Podcast-015 AI", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
-    if apiKey:
-        st.success(f"✅ API Key 已載入")
-        st.caption("🚀 首選模型：gemini-2.5-flash (含自動備援機制)")
-    else:
-        st.warning("⚠️ 未偵測到 API Key")
-
-# ==========================================
-# 1. 核心字典庫 (快取)
-# ==========================================
-@st.cache_data(persist=True)
-def get_dictionary():
-    return {
-        # --- 新範例單字 ---
-        "mtalux": {"morph": "m-talux", "gloss": "主事焦點-熱", "meaning": "熱/燙"},
-        "mring": {"morph": "mring", "gloss": "汗", "meaning": "汗"},
-        "bhangan": {"morph": "bhangan", "gloss": "聽", "meaning": "聽到/聽聞"},
-        "meiyah": {"morph": "m-iyah", "gloss": "主事焦點-來", "meaning": "來"},
-        "msa": {"morph": "msa", "gloss": "說", "meaning": "說/如此"},
-        "mlatat": {"morph": "m-latat", "gloss": "主事焦點-出去", "meaning": "出門/出去"},
-        "snguhi": {"morph": "snguh-i", "gloss": "忘記-祈使", "meaning": "忘記(別忘)"},
-        # --- 原有單字 ---
-        "tmkuy": {"morph": "t<m>kuy", "gloss": "<主事焦點>種", "meaning": "種植/播種"},
-        "tnkuyan": {"morph": "tnkuy-an", "gloss": "田", "meaning": "田地/耕地"},
-        "masu": {"morph": "masu", "gloss": "小米", "meaning": "小米"},
-        "daya": {"morph": "daya", "gloss": "上游/山上", "meaning": "上游/山上"},
-        "ka": {"morph": "ka", "gloss": "主格", "meaning": "(主格標記)"},
-        "ni": {"morph": "ni", "gloss": "連接詞", "meaning": "和/與"},
-        "o": {"morph": "o", "gloss": "主題", "meaning": "(主題標記)"},
-        "do": {"morph": "do", "gloss": "助詞", "meaning": "(強調/時間)"},
-        "ga": {"morph": "ga", "gloss": "助詞", "meaning": "(特定)"},
-        "hug": {"morph": "hug", "gloss": "疑問詞", "meaning": "嗎"},
-        "da": {"morph": "da", "gloss": "語尾助詞", "meaning": "了"},
-        "saw": {"morph": "saw", "gloss": "像", "meaning": "像/如此"},
-        "kiya": {"morph": "kiya", "gloss": "那", "meaning": "那/所以"},
-        "kika": {"morph": "kika", "gloss": "連接詞", "meaning": "所以/就是"},
-        "nasi": {"morph": "nasi", "gloss": "連接詞", "meaning": "如果"},
-        "ana": {"morph": "ana", "gloss": "無定詞", "meaning": "雖然/即使"},
-        "ida": {"morph": "ida", "gloss": "助動詞", "meaning": "一定/仍然"},
-        "ini": {"morph": "ini", "gloss": "否定", "meaning": "不/沒有"},
-        "aji": {"morph": "aji", "gloss": "否定", "meaning": "不是/不要"},
-        "uxay": {"morph": "uxay", "gloss": "否定", "meaning": "不是"},
-        "iya": {"morph": "iya", "gloss": "否定祈使", "meaning": "別/不要"},
-        "ungat": {"morph": "ungat", "gloss": "否定存在", "meaning": "沒有"},
-        "niqan": {"morph": "niqan", "gloss": "存在", "meaning": "有"},
-        "wada": {"morph": "wada", "gloss": "完成貌.助動", "meaning": "已經/去"},
-        "gisu": {"morph": "gisu", "gloss": "進行貌.助動", "meaning": "正在(近)"},
-        "gaga": {"morph": "gaga", "gloss": "進行貌.助動", "meaning": "正在(遠)/在那裡"},
-        "mha": {"morph": "mha", "gloss": "未來.助動", "meaning": "將"},
-        "naa": {"morph": "naa", "gloss": "助動詞", "meaning": "應該"},
-        "ku": {"morph": "ku", "gloss": "我.主格", "meaning": "我"},
-        "su": {"morph": "su", "gloss": "你.主格/屬格", "meaning": "你/你的"},
-        "mu": {"morph": "mu", "gloss": "我.屬格", "meaning": "我的"},
-        "na": {"morph": "na", "gloss": "他.屬格", "meaning": "他的/尚未"},
-        "ta": {"morph": "ta", "gloss": "我們.包含.主格", "meaning": "我們(包含)"},
-        "nami": {"morph": "nami", "gloss": "我們.排除.主格/屬格", "meaning": "我們(排除)"},
-        "namu": {"morph": "namu", "gloss": "你們.主格/屬格", "meaning": "你們"},
-        "deha": {"morph": "deha", "gloss": "他.主格/屬格", "meaning": "他們/二"},
-        "yaku": {"morph": "yaku", "gloss": "我.中性格", "meaning": "我"},
-        "isu": {"morph": "isu", "gloss": "你.中性格", "meaning": "你"},
-        "hiya": {"morph": "hiya", "gloss": "他.中性格", "meaning": "他/她/那裡"},
-        "kenan": {"morph": "kenan", "gloss": "我.斜格", "meaning": "對我/被我"},
-        "sunan": {"morph": "sunan", "gloss": "你.斜格", "meaning": "對你/被你"},
-        "menan": {"morph": "menan", "gloss": "我們.排除.斜格", "meaning": "我們"},
-        "niyi": {"morph": "niyi", "gloss": "這/這個", "meaning": "這/這個"},
-        "adas": {"morph": "adas", "gloss": "帶", "meaning": "帶"},
-        "aga": {"morph": "aga", "gloss": "弓", "meaning": "弓"},
-        "aguh": {"morph": "aguh", "gloss": "來(命令)", "meaning": "來(叫人來)"},
-        "alang": {"morph": "alang", "gloss": "部落", "meaning": "部落/村子"},
-        "asi": {"morph": "asi", "gloss": "必須", "meaning": "必須"},
-        "asu": {"morph": "asu", "gloss": "船", "meaning": "船"},
-        "ayug": {"morph": "ayug", "gloss": "溪流", "meaning": "小溪"},
-        "babaw": {"morph": "babaw", "gloss": "上面", "meaning": "上面/之後"},
-        "babuy": {"morph": "babuy", "gloss": "豬", "meaning": "豬"},
-        "baga": {"morph": "baga", "gloss": "手", "meaning": "手"},
-        "bais": {"morph": "bais", "gloss": "配偶", "meaning": "配偶"},
-        "baki": {"morph": "baki", "gloss": "祖父", "meaning": "祖父/岳父"},
-        "balay": {"morph": "balay", "gloss": "真", "meaning": "真的/非常"},
-        "balung": {"morph": "balung", "gloss": "蛋", "meaning": "蛋/卵"},
-        "baraw": {"morph": "baraw", "gloss": "上面", "meaning": "上面"},
-        "bbrigan": {"morph": "bbarig-an", "gloss": "買賣-處所", "meaning": "商店"},
-        "begu": {"morph": "begu", "gloss": "湯", "meaning": "湯"},
-        "berah": {"morph": "berah", "gloss": "前面", "meaning": "前面/以前"},
-        "bgihur": {"morph": "bgihur", "gloss": "風", "meaning": "風"},
-        "bhegay": {"morph": "bhegay", "gloss": "白", "meaning": "白色"},
-        "bi": {"morph": "bi", "gloss": "很", "meaning": "很"},
-        "bilaq": {"morph": "bilaq", "gloss": "小", "meaning": "小"},
-        "birat": {"morph": "birat", "gloss": "耳朵", "meaning": "耳朵"},
-        "biyi": {"morph": "biyi", "gloss": "工寮", "meaning": "工寮"},
-        "blebul": {"morph": "blebul", "gloss": "香蕉", "meaning": "香蕉"},
-        "bowyak": {"morph": "bowyak", "gloss": "山豬", "meaning": "山豬"},
-        "brebil": {"morph": "brebil", "gloss": "拉", "meaning": "拉/拖"},
-        "brunguy": {"morph": "brunguy", "gloss": "背籃", "meaning": "背籃"},
-        "btunux": {"morph": "btunux", "gloss": "石頭", "meaning": "石頭"},
-        "bubu": {"morph": "bubu", "gloss": "母親", "meaning": "母親"},
-        "bubung": {"morph": "bubung", "gloss": "名詞", "meaning": "雨傘"},
-        "bunga": {"morph": "bunga", "gloss": "地瓜", "meaning": "地瓜"},
-        "buwax": {"morph": "buwax", "gloss": "米", "meaning": "米(未煮)"},
-        "cicih": {"morph": "cicih", "gloss": "一點", "meaning": "一點點/少"},
-        "cimu": {"morph": "cimu", "gloss": "鹽", "meaning": "鹽"},
-        "dara": {"morph": "dara", "gloss": "血", "meaning": "血"},
-        "desun": {"morph": "des-un", "gloss": "帶-受事焦點", "meaning": "被帶"},
-        "dgiyaq": {"morph": "dgiyaq", "gloss": "山", "meaning": "山"},
-        "dmayaw": {"morph": "d<m>ayaw", "gloss": "<主事焦點>幫忙", "meaning": "幫忙"},
-        "dmuuy": {"morph": "d<m>uuy", "gloss": "<主事焦點>拿", "meaning": "拿著/使用"},
-        "dowriq": {"morph": "dowriq", "gloss": "眼睛", "meaning": "眼睛"},
-        "dqeras": {"morph": "dqeras", "gloss": "臉", "meaning": "臉"},
-        "durun": {"morph": "duru-un", "gloss": "委託-受事焦點", "meaning": "被委託"},
-        "dxegal": {"morph": "dxegal", "gloss": "地", "meaning": "土地"},
-        "elug": {"morph": "elug", "gloss": "路", "meaning": "道路"},
-        "empgu": {"morph": "emp-gu", "gloss": "未來-發芽", "meaning": "發芽"},
-        "empitu": {"morph": "empitu", "gloss": "七", "meaning": "七"},
-        "empquyux": {"morph": "emp-quyux", "gloss": "未來-雨", "meaning": "將下雨"},
-        "emptgesa": {"morph": "emp-tgesa", "gloss": "主事焦點-教", "meaning": "老師"},
-        "empusal": {"morph": "empusal", "gloss": "二十", "meaning": "二十"},
-        "gamil": {"morph": "gamil", "gloss": "根", "meaning": "根"},
-        "gaya": {"morph": "gaya", "gloss": "習俗", "meaning": "規範/習俗"},
-        "gbiyan": {"morph": "gbiyan", "gloss": "傍晚", "meaning": "傍晚"},
-        "gmquring": {"morph": "g<m>quring", "gloss": "<主事焦點>究", "meaning": "研究"},
-        "gsilung": {"morph": "gsilung", "gloss": "海", "meaning": "海"},
-        "hakaw": {"morph": "hakaw", "gloss": "橋", "meaning": "橋樑"},
-        "hangan": {"morph": "hangan", "gloss": "名字", "meaning": "名字"},
-        "hici": {"morph": "hici", "gloss": "以後", "meaning": "以後"},
-        "hidaw": {"morph": "hidaw", "gloss": "太陽", "meaning": "太陽"},
-        "hini": {"morph": "hini", "gloss": "這裡", "meaning": "這裡"},
-        "hiyi": {"morph": "hiyi", "gloss": "身體/肉", "meaning": "身體/肉"},
-        "hmuya": {"morph": "h<m>uya", "gloss": "<主事焦點>如何", "meaning": "為什麼/如何"},
-        "hnici": {"morph": "h<en>ici", "gloss": "<完成貌>留下", "meaning": "留下"},
-        "hngkawas": {"morph": "hngkawas", "gloss": "年", "meaning": "年/歲"},
-        "huling": {"morph": "huling", "gloss": "狗", "meaning": "狗"},
-        "idas": {"morph": "idas", "gloss": "月亮", "meaning": "月亮"},
-        "idaw": {"morph": "idaw", "gloss": "飯", "meaning": "飯"},
-        "ima": {"morph": "ima", "gloss": "誰", "meaning": "誰"},
-        "inu": {"morph": "inu", "gloss": "哪裡", "meaning": "哪裡"},
-        "jiyax": {"morph": "jiyax", "gloss": "日子", "meaning": "日子/時間"},
-        "kacing": {"morph": "kacing", "gloss": "牛", "meaning": "牛"},
-        "kana": {"morph": "kana", "gloss": "全部", "meaning": "全部"},
-        "karat": {"morph": "karat", "gloss": "天空", "meaning": "天空/天氣"},
-        "kari": {"morph": "kari", "gloss": "名詞", "meaning": "話/語言"},
-        "keeman": {"morph": "keeman", "gloss": "晚上", "meaning": "晚上"},
-        "kerig": {"morph": "kerig", "gloss": "苧麻", "meaning": "苧麻"},
-        "kingal": {"morph": "kingal", "gloss": "一", "meaning": "一"},
-        "kjiyax": {"morph": "kjiyax", "gloss": "常常", "meaning": "天天/常常"},
-        "klaun": {"morph": "kla-un", "gloss": "知-受事焦點", "meaning": "被知道"},
-        "kmari": {"morph": "k<m>ari", "gloss": "<主事焦點>挖", "meaning": "挖掘"},
-        "kndusan": {"morph": "kndusan", "gloss": "名詞", "meaning": "生命/生活"},
-        "knuwan": {"morph": "knuwan", "gloss": "何時", "meaning": "什麼時候"},
-        "kskuy": {"morph": "k-sekuy", "gloss": "靜態-冷", "meaning": "冷"},
-        "kuxul": {"morph": "kuxul", "gloss": "喜歡", "meaning": "喜歡/心情"},
-        "kuyuh": {"morph": "kuyuh", "gloss": "女人", "meaning": "女人/妻子"},
-        "lala": {"morph": "lala", "gloss": "多", "meaning": "很多"},
-        "laqi": {"morph": "laqi", "gloss": "小孩", "meaning": "小孩"},
-        "lukus": {"morph": "lukus", "gloss": "衣服", "meaning": "衣服"},
-        "lupung": {"morph": "lupung", "gloss": "朋友", "meaning": "朋友"},
-        "madas": {"morph": "m-adas", "gloss": "主事焦點-帶", "meaning": "攜帶"},
-        "maduk": {"morph": "m-aduk", "gloss": "主事焦點-獵", "meaning": "打獵"},
-        "mahun": {"morph": "mah-un", "gloss": "喝-受事焦點", "meaning": "要喝的/飲料"},
-        "malu": {"morph": "malu", "gloss": "好", "meaning": "好"},
-        "mangal": {"morph": "m-angal", "gloss": "主事焦點-拿", "meaning": "拿取"},
-        "manu": {"morph": "manu", "gloss": "疑問詞", "meaning": "什麼"},
-        "marig": {"morph": "m-arig", "gloss": "主事焦點-買", "meaning": "買"},
-        "matas": {"morph": "m-atas", "gloss": "主事焦點-寫", "meaning": "寫/讀書"},
-        "maxal": {"morph": "maxal", "gloss": "十", "meaning": "十"},
-        "mbanah": {"morph": "m-banah", "gloss": "主事焦點-紅", "meaning": "紅色"},
-        "mddayaw": {"morph": "m-ddayaw", "gloss": "主事焦點-互相幫忙", "meaning": "互相幫忙"},
-        "mdrumut": {"morph": "m-drumut", "gloss": "主事焦點-勤勞", "meaning": "勤勞"},
-        "mekan": {"morph": "m-ekan", "gloss": "主事焦點-吃", "meaning": "吃"},
-        "mekela": {"morph": "m-kela", "gloss": "主事焦點-知", "meaning": "知道/會"},
-        "meniq": {"morph": "m-eniq", "gloss": "主事焦點-在", "meaning": "居住/在"},
-        "mgarang": {"morph": "m-garang", "gloss": "主事焦點-廣", "meaning": "散播/推廣"},
-        "mhapuy": {"morph": "m-hapuy", "gloss": "主事焦點-煮", "meaning": "煮"},
-        "mhuqil": {"morph": "m-huqil", "gloss": "主事焦點-死", "meaning": "死亡"},
-        "mhuway": {"morph": "m-huway", "gloss": "主事焦點-慷慨", "meaning": "謝謝/慷慨"},
-        "mimah": {"morph": "m-imah", "gloss": "主事焦點-喝", "meaning": "喝"},
-        "mirit": {"morph": "mirit", "gloss": "羊", "meaning": "羊"},
-        "mita": {"morph": "m-ita", "gloss": "主事焦點-看", "meaning": "看"},
-        "miyah": {"morph": "m-iyah", "gloss": "主事焦點-來", "meaning": "來"},
-        "miying": {"morph": "m-iying", "gloss": "主事焦點-找", "meaning": "尋找/拜訪"},
-        "mkla": {"morph": "m-kla", "gloss": "主事焦點-知", "meaning": "知道/會"},
-        "mkela": {"morph": "m-kela", "gloss": "主事焦點-知", "meaning": "知道/會"},
-        "mkeray": {"morph": "mkeray", "gloss": "主事焦點-堅固", "meaning": "堅固"},
-        "mkesa": {"morph": "m-kesa", "gloss": "主事焦點-走", "meaning": "走路"},
-        "mnarux": {"morph": "m-narux", "gloss": "主事焦點-病", "meaning": "生病/痛"},
-        "mngungu": {"morph": "m-ngungu", "gloss": "主事焦點-怕", "meaning": "害怕"},
-        "mnita": {"morph": "m<n>ita", "gloss": "<主事焦點><完成>看", "meaning": "看過"},
-        "mniyah": {"morph": "m<n>iyah", "gloss": "主事焦點<完成>-來", "meaning": "來過"},
-        "mnkan": {"morph": "m<n>ekan", "gloss": "主事焦點<完成>-吃", "meaning": "吃過"},
-        "mowsa": {"morph": "m-owsa", "gloss": "主事焦點-去(未來)", "meaning": "將去"},
-        "mqaras": {"morph": "m-qaras", "gloss": "主事焦點-樂", "meaning": "高興/快樂"},
-        "mrawa": {"morph": "m-rawa", "gloss": "主事焦點-玩", "meaning": "玩耍"},
-        "mrengaw": {"morph": "m-rengaw", "gloss": "主事焦點-說", "meaning": "說"},
-        "msangay": {"morph": "m-sangay", "gloss": "主事焦點-休", "meaning": "休息"},
-        "msekuy": {"morph": "m-sekuy", "gloss": "主事焦點-冷", "meaning": "變冷/冷"},
-        "mseupu": {"morph": "m-seupu", "gloss": "主事焦點-一起", "meaning": "一起"},
-        "mskuy": {"morph": "m-sekuy", "gloss": "主事焦點-冷", "meaning": "變冷/冷"},
-        "msterung": {"morph": "m-sterung", "gloss": "主事焦點-遇", "meaning": "遇見/結婚"},
-        "mtaqi": {"morph": "m-taqi", "gloss": "主事焦點-睡", "meaning": "睡覺"},
-        "mtutuy": {"morph": "m-tutuy", "gloss": "主事焦點-起", "meaning": "起床"},
-        "musa": {"morph": "m-usa", "gloss": "主事焦點-去", "meaning": "去"},
-        "naqih": {"morph": "naqih", "gloss": "壞", "meaning": "不好/壞"},
-        "ngangut": {"morph": "ngangut", "gloss": "外面", "meaning": "外面"},
-        "ngiyaw": {"morph": "ngiyaw", "gloss": "貓", "meaning": "貓"},
-        "nii": {"morph": "nii", "gloss": "這", "meaning": "這"},
-        "niiq": {"morph": "niiq", "gloss": "在", "meaning": "在(命令)"},
-        "paah": {"morph": "paah", "gloss": "從", "meaning": "從"},
-        "pada": {"morph": "pada", "gloss": "山羌", "meaning": "山羌"},
-        "pajiq": {"morph": "pajiq", "gloss": "菜", "meaning": "青菜"},
-        "papak": {"morph": "papak", "gloss": "腳", "meaning": "腳"},
-        "paru": {"morph": "paru", "gloss": "大", "meaning": "大"},
-        "patas": {"morph": "patas", "gloss": "書", "meaning": "書/信"},
-        "pblaiq": {"morph": "pe-blaiq", "gloss": "使-好", "meaning": "使平安"},
-        "phuqil": {"morph": "p-huqil", "gloss": "使動-死", "meaning": "殺/使死"},
-        "pila": {"morph": "pila", "gloss": "錢", "meaning": "錢"},
-        "piya": {"morph": "piya", "gloss": "多少", "meaning": "多少"},
-        "pndakar": {"morph": "p-en-dakar", "gloss": "叮嚀", "meaning": "叮嚀/囑咐"},
-        "pnrjingan": {"morph": "p<n>rajing-an", "gloss": "開始<完成>-名物化", "meaning": "開始/開端"},
-        "prajing": {"morph": "prajing", "gloss": "開始", "meaning": "開始"},
-        "pratu": {"morph": "pratu", "gloss": "碗", "meaning": "碗"},
-        "prengaw": {"morph": "p-rengaw", "gloss": "使動-說", "meaning": "使說/談論"},
-        "pspung": {"morph": "p-spung", "gloss": "主事焦點-比", "meaning": "測驗/比賽"},
-        "psterung": {"morph": "p-sterung", "gloss": "使動-遇", "meaning": "使遇見/使結婚"},
-        "ptasan": {"morph": "patas-an", "gloss": "寫-處所", "meaning": "學校"},
-        "pucing": {"morph": "pucing", "gloss": "名詞", "meaning": "獵刀"},
-        "pupu": {"morph": "pupu", "gloss": "斧頭", "meaning": "斧頭"},
-        "pusu": {"morph": "pusu", "gloss": "名詞", "meaning": "根源/主要"},
-        "qbsuran": {"morph": "qbsuran", "gloss": "兄姊", "meaning": "哥哥/姊姊"},
-        "qduriq": {"morph": "qduriq", "gloss": "逃", "meaning": "逃跑"},
-        "qempah": {"morph": "q<em?>pah", "gloss": "<主事焦點>工作", "meaning": "工作"},
-        "qhuni": {"morph": "qhuni", "gloss": "樹", "meaning": "樹木"},
-        "qita": {"morph": "qita", "gloss": "看", "meaning": "看"},
-        "qmita": {"morph": "q<m>ita", "gloss": "<主事焦點>看", "meaning": "看"},
-        "qmpahan": {"morph": "qmpah-an", "gloss": "田", "meaning": "田地"},
-        "qmpringan": {"morph": "qmpringan", "gloss": "名詞", "meaning": "團隊/基金會"},
-        "qmuyux": {"morph": "q<m>uyux", "gloss": "<主事焦點>雨", "meaning": "下雨"},
-        "qowlit": {"morph": "qowlit", "gloss": "鼠", "meaning": "老鼠"},
-        "qpahun": {"morph": "qmpah-un", "gloss": "工作-受事焦點", "meaning": "工作(被做)"},
-        "qsiya": {"morph": "qsiya", "gloss": "水", "meaning": "水"},
-        "qsurux": {"morph": "qsurux", "gloss": "魚", "meaning": "魚"},
-        "qtaan": {"morph": "qta-an", "gloss": "看-處所焦點", "meaning": "被看見/看見之處"},
-        "quwaq": {"morph": "quwaq", "gloss": "嘴", "meaning": "嘴巴"},
-        "quyu": {"morph": "quyu", "gloss": "蛇", "meaning": "蛇"},
-        "rapit": {"morph": "rapit", "gloss": "飛鼠", "meaning": "飛鼠"},
-        "rbagan": {"morph": "rbagan", "gloss": "夏天", "meaning": "夏天"},
-        "risaw": {"morph": "risaw", "gloss": "青年", "meaning": "男青年"},
-        "rmengaw": {"morph": "r<m>ngaw", "gloss": "<主事焦點>說", "meaning": "說"},
-        "rnabaw": {"morph": "rnabaw", "gloss": "名詞", "meaning": "葉子"},
-        "rngagan": {"morph": "rngag-an", "gloss": "說-處所焦點", "meaning": "告訴/說"},
-        "rngagi": {"morph": "rngag-i", "gloss": "說-祈使", "meaning": "告訴(命令)"},
-        "rngagun": {"morph": "rngag-un", "gloss": "說-受事焦點", "meaning": "被說/要說的話"},
-        "rudan": {"morph": "rudan", "gloss": "名詞", "meaning": "老人/祖先"},
-        "rudux": {"morph": "rudux", "gloss": "雞", "meaning": "雞"},
-        "ruwan": {"morph": "ruwan", "gloss": "裡面", "meaning": "裡面"},
-        "saman": {"morph": "saman", "gloss": "名詞", "meaning": "明天"},
-        "samat": {"morph": "samat", "gloss": "獵物", "meaning": "野獸/獵物"},
-        "sapah": {"morph": "sapah", "gloss": "家", "meaning": "家/房子"},
-        "sapuh": {"morph": "sapuh", "gloss": "藥", "meaning": "藥"},
-        "sari": {"morph": "sari", "gloss": "芋頭", "meaning": "芋頭"},
-        "saw": {"morph": "saw", "gloss": "像", "meaning": "像/如此"},
-        "sayang": {"morph": "sayang", "gloss": "名詞", "meaning": "現在/今天"},
-        "seejiq": {"morph": "seejiq", "gloss": "名詞", "meaning": "人/賽德克"},
-        "senaw": {"morph": "senaw", "gloss": "男人", "meaning": "男人"},
-        "shiga": {"morph": "shiga", "gloss": "昨天", "meaning": "昨天"},
-        "shungi": {"morph": "shungi", "gloss": "忘記", "meaning": "忘記"},
-        "sibus": {"morph": "sibus", "gloss": "甘蔗", "meaning": "甘蔗"},
-        "sinaw": {"morph": "sinaw", "gloss": "酒", "meaning": "酒"},
-        "siyang": {"morph": "siyang", "gloss": "豬肉", "meaning": "肥豬肉"},
-        "siyaw": {"morph": "siyaw", "gloss": "旁邊", "meaning": "旁邊"},
-        "smiling": {"morph": "s-m-iling", "gloss": "主事焦點-問", "meaning": "問"},
-        "smku": {"morph": "s<m>ku", "gloss": "<主事焦點>存", "meaning": "保存/存放"},
-        "smluhay": {"morph": "s<m>luhay", "gloss": "<主事焦點>學", "meaning": "學習"},
-        "smmalu": {"morph": "s<m>malu", "gloss": "<主事焦點>做", "meaning": "製作/研發"},
-        "smepug": {"morph": "s<m>epug", "gloss": "<主事焦點>數", "meaning": "數/盤點"},
-        "smruwa": {"morph": "s<m>ruwa", "gloss": "<主事焦點>答應", "meaning": "答應"},
-        "snduray": {"morph": "snduray", "gloss": "名詞", "meaning": "最近"},
-        "sngulun": {"morph": "snegul-un", "gloss": "跟隨-受事焦點", "meaning": "被跟隨"},
-        "snhiyi": {"morph": "snhiyi", "gloss": "信", "meaning": "相信"},
-        "speriq": {"morph": "speriq", "gloss": "名詞", "meaning": "草"},
-        "swai": {"morph": "swai", "gloss": "弟妹", "meaning": "弟弟/妹妹"},
-        "talang": {"morph": "talang", "gloss": "跑", "meaning": "跑(命令)"},
-        "tama": {"morph": "tama", "gloss": "父親", "meaning": "父親"},
-        "tasil": {"morph": "tasil", "gloss": "名詞", "meaning": "大石頭"},
-        "tduwa": {"morph": "tduwa", "gloss": "可以", "meaning": "可以"},
-        "teru": {"morph": "teru", "gloss": "三", "meaning": "三"},
-        "tmalang": {"morph": "t<m>alang", "gloss": "<主事焦點>跑", "meaning": "跑"},
-        "tmapaq": {"morph": "t<m>apaq", "gloss": "<主事焦點>拍", "meaning": "拍打/游泳"},
-        "tmgesa": {"morph": "t<m>gesa", "gloss": "<主事焦點>教", "meaning": "教導"},
-        "tmgsa": {"morph": "tmgsa", "gloss": "教導", "meaning": "教導"},
-        "tminun": {"morph": "t<m>inun", "gloss": "<主事焦點>織", "meaning": "編織"},
-        "tnpusu": {"morph": "te-ne-pusu", "gloss": "扎根/定居", "meaning": "扎根"},
-        "trima": {"morph": "trima", "gloss": "洗澡", "meaning": "洗澡"},
-        "truku": {"morph": "Truku", "gloss": "專有名詞", "meaning": "太魯閣"},
-        "truma": {"morph": "truma", "gloss": "下面", "meaning": "下面"},
-        "tunux": {"morph": "tunux", "gloss": "頭", "meaning": "頭"},
-        "uqan": {"morph": "uq-an", "gloss": "吃-處所焦點", "meaning": "吃飯的地方"},
-        "uqi": {"morph": "uq-i", "gloss": "吃-祈使", "meaning": "吃(命令)"},
-        "uqun": {"morph": "uq-un", "gloss": "吃-受事焦點", "meaning": "要吃的/食物"},
-        "uri": {"morph": "uri", "gloss": "也", "meaning": "也"},
-        "utux": {"morph": "utux", "gloss": "靈", "meaning": "神/鬼/祖靈"},
-        "uwa": {"morph": "uwa", "gloss": "少女", "meaning": "女青年"},
-        "uyas": {"morph": "uyas", "gloss": "歌", "meaning": "歌"},
-        "yayu": {"morph": "yayu", "gloss": "名詞", "meaning": "小刀"},
-        "yayung": {"morph": "yayung", "gloss": "河", "meaning": "河流"}
-    }
-DICTIONARY = get_dictionary()
-
-# ==========================================
-# 2. 構詞規則引擎
-# ==========================================
-def analyze_morphology(word):
-    analysis = {"morph": word, "gloss": "???", "meaning": ""}
+    # 純文字標題 (無圖片錯誤)
+    st.image("[https://img.icons8.com/color/96/microphone.png](https://img.icons8.com/color/96/microphone.png)", width=80)
+    st.title("原語 Podcast")
+    st.markdown("### 🇹🇼 臺灣原住民族語生成器")
     
-    if re.match(r'^m[a-z]+', word) and not word.startswith("ma"):
-        if word.startswith("me"):
-            root = word[2:]
-            return {"morph": f"me-{root}", "gloss": "主事焦點-", "meaning": "(動詞)"}
-        elif word.startswith("m"):
-            root = word[1:]
-            if any(char in "aeiou" for char in root):
-                return {"morph": f"m-{root}", "gloss": "主事焦點-", "meaning": "(動詞)"}
+    st.markdown("---")
+    st.markdown("### 🌟 功能簡介 (AI版)")
+    st.info("""
+    **🧪 AI實驗版功能**：
     
-    if word.startswith("sm") and len(word) > 3:
-         root = word[2:]
-         return {"morph": f"s<m>{root}", "gloss": "<主事焦點>", "meaning": "(動詞)"}
-    if word.startswith("km") and len(word) > 3:
-         root = word[2:]
-         return {"morph": f"k<m>{root}", "gloss": "<主事焦點>", "meaning": "(動詞)"}
-    if word.startswith("tm") and len(word) > 3:
-         root = word[2:]
-         return {"morph": f"t<m>{root}", "gloss": "<主事焦點>", "meaning": "(動詞)"}
-    if word.startswith("gm") and len(word) > 3:
-         root = word[2:]
-         return {"morph": f"g<m>{root}", "gloss": "<主事焦點>", "meaning": "(動詞)"}
-
-    if len(word) > 3 and word[1] in ['m', 'n'] and word[2] in "aeiou":
-        infix = word[1]
-        root = word[0] + word[2:]
-        gloss = "<主事焦點>" if infix == 'm' else "<完成貌>"
-        return {"morph": f"{word[0]}<{infix}>{word[2:]}", "gloss": gloss, "meaning": "(動詞)"}
+    **1. 🤖 AI 寫劇本** 結合 Google Gemini，讀取 PDF 或文字資料，自動撰寫對話腳本。
     
-    if word.endswith("un"):
-        root = word[:-2]
-        return {"morph": f"{root}-un", "gloss": "-受事焦點", "meaning": "(被動/未來)"}
-
-    if word.endswith("an"):
-        root = word[:-2]
-        return {"morph": f"{root}-an", "gloss": "-處所焦點", "meaning": "(處所/過去)"}
-
-    if word.endswith("i"):
-        root = word[:-1]
-        return {"morph": f"{root}-i", "gloss": "-祈使", "meaning": "(命令)"}
-
-    if word.startswith("emp"):
-        root = word[3:]
-        return {"morph": f"emp-{root}", "gloss": "未來-", "meaning": "將..."}
+    **2. 🎙️ 雙語合成**
+    自動帶入生成的腳本進行合成。
+    """)
     
-    if word.startswith("pe"):
-        root = word[2:]
-        return {"morph": f"pe-{root}", "gloss": "使動-", "meaning": "使..."}
-    if word.startswith("p") and len(word) > 2 and word[1] not in "aeiou":
-        root = word[1:]
-        return {"morph": f"p-{root}", "gloss": "使動-", "meaning": "使..."}
+    st.markdown("---")
+    st.markdown("#### 🔑 AI 設定")
+    if 'gemini_key' not in st.session_state:
+        st.session_state['gemini_key'] = ''
+    
+    user_key = st.text_input("Gemini API Key", value=st.session_state['gemini_key'], type="password")
+    if user_key:
+        st.session_state['gemini_key'] = user_key
+        st.success("API Key 已設定")
 
-    return analysis
+    st.markdown("---")
+    st.success("✅ 系統狀態：正常")
+
+st.title("🧪 AI 實驗室：智慧劇本生成")
+st.markdown("結合 **RAG (檢索增強生成)** 技術，讓 AI 讀懂資料，自動產出族語廣播劇。")
+
+if 'dialogue_list' not in st.session_state:
+    st.session_state['dialogue_list'] = []
+
+# ---------------------------------------------------------
+# 3. 分頁定義
+# ---------------------------------------------------------
+tab_ai, tab_tts = st.tabs(["🤖 AI 寫劇本 (RAG)", "🎙️ 開始合成 (TTS)"])
 
 # ==========================================
-# 3. AI 翻譯 API (gemini-2.5-flash + 快取加速 + 備援機制)
+# 分頁 1: AI 寫劇本 (RAG)
 # ==========================================
-@st.cache_data(show_spinner=False)
-def call_ai_translation(text, target_lang, gloss_context, api_key):
+with tab_ai:
+    st.markdown("### 步驟 1：提供資料讓 AI 寫劇本")
+    
+    api_key = st.session_state.get('gemini_key', '')
     if not api_key:
-        return None
-
-    # 定義模型優先順序清單
-    models_to_try = [
-        'gemini-2.5-flash',      # 1. 首選 (最新/最快)
-        'gemini-2.0-flash-exp',  # 2. 備選 (實驗版，通常免費額度高)
-        'gemini-1.5-flash',      # 3. 備選 (穩定版 Flash)
-        'gemini-1.5-pro'         # 4. 備選 (穩定版 Pro，能力強但較慢)
-    ]
-
-    genai.configure(api_key=api_key)
-
-    if target_lang == 'truku':
-        prompt = f"請將以下中文句子翻譯成太魯閣族語(Truku)。直接給出翻譯後的族語句子即可，不要包含其他解釋或拼音。\n句子：{text}"
-    else:
-        prompt = f"""
-        你是一個精通太魯閣語(Truku)與中文的語言學家。請進行以下翻譯任務：
-        1. **結構對應 (Structural Alignment)**：參考提供的 [詞法分析] (Gloss)，理解原句的語法結構（主事/受事焦點、時態、格位）。
-        2. **直譯 (Literal Translation)**：先在心中進行詞對詞的直譯。
-        3. **語意優化 (Semantic Refinement)**：將直譯結果調整為通順的中文，但**嚴格保留原句的焦點與語態**（例如：受事焦點句應翻成「被...」或「把...」結構）。
-
-        原文：{text}
-        詞法分析參考：{gloss_context}
-
-        請直接輸出翻譯結果，不要包含任何解釋或前言後語。
-        """
-
-    last_error = ""
+        st.warning("⚠️ 請先在左側輸入 Google Gemini API Key")
     
-    # 迴圈嘗試模型
-    for model_name in models_to_try:
-        try:
-            # 可以在後台印出正在嘗試哪個模型 (Streamlit Cloud Logs)
-            print(f"Trying model: {model_name}...") 
-            
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text.strip() # 成功就回傳
-            
-        except Exception as e:
-            last_error = str(e)
-            # 如果是 404 (找不到模型) 或 429 (額度滿)，就換下一個
-            continue
-
-    # 如果全部都失敗
-    return f"ERROR: 所有模型皆回應失敗。最後一次錯誤: {last_error}"
-
-# ==========================================
-# 4. 輔助函式：切分句子 (精準斷句修正版)
-# ==========================================
-def split_sentences(text):
-    # 定義要切割的標點符號： . ? ! (半型優先)
-    # 我們使用 capture group () 來保留標點符號
-    pattern = r'([.?!]+)' 
-    
-    parts = re.split(pattern, text)
-    sentences = []
-    
-    # 手動重組：將 "句子文字" 和 "標點" 黏合
-    # parts 會像這樣: ['Sentence A', '.', ' Sentence B', '.', '']
-    
-    temp_text = ""
-    for part in parts:
-        if not part: continue # 跳過空字串
+    with st.container(border=True):
+        input_method = st.radio("資料來源", ["貼上文字", "上傳 PDF"], horizontal=True)
         
-        # 檢查這部分是不是純標點
-        if re.match(pattern, part):
-            # 如果是標點，黏到上一段文字後面，並結算為一句
-            temp_text += part
-            sentences.append(temp_text.strip())
-            temp_text = "" # 重置
+        context_text = ""
+        if input_method == "貼上文字":
+            context_text = st.text_area("參考資料", height=200, placeholder="貼上部落故事、新聞或文化介紹...")
         else:
-            # 如果是文字，先暫存
-            temp_text += part
-    
-    # 處理最後可能剩下的文字 (例如最後一句沒標點)
-    if temp_text.strip():
-        sentences.append(temp_text.strip())
+            uploaded_pdf = st.file_uploader("上傳 PDF", type="pdf")
+            if uploaded_pdf:
+                try:
+                    context_text = read_pdf(uploaded_pdf)
+                    st.success(f"成功讀取 {len(context_text)} 字")
+                except: st.error("PDF 讀取失敗")
         
-    return sentences
-
-# ==========================================
-# 介面邏輯
-# ==========================================
-
-st.title("太魯閣語構詞分析器 (Pro)")
-st.markdown("---")
-
-if "user_input" not in st.session_state:
-    st.session_state["user_input"] = ""
-
-def set_example_text(text):
-    st.session_state["user_input"] = text
-
-# 定義範例文字
-ex1_text = "Mtalux bi ka hidaw."
-ex2_text = "Ima hangan na ka qbsuran su kuyuh? Hangan na o Biyang."
-ex3_text = "Mha ta inu ka saman hug? Mkmusa ku malu bi rwaan hiya. Tgeinu ka ssaun ta?"
-
-col1, col2 = st.columns([3, 1])
-
-with col1:
-    input_text = st.text_area("請輸入句子 (族語或中文)", height=100, 
-                              placeholder="支援多句輸入，例如：Sentence 1. Sentence 2.", 
-                              key="user_input")
-
-with col2:
-    st.write("範例：")
-    st.button("範例 1", on_click=set_example_text, args=(ex1_text,))
-    st.button("範例 2", on_click=set_example_text, args=(ex2_text,))
-    st.button("範例 3", on_click=set_example_text, args=(ex3_text,))
-
-# 分析按鈕
-if st.button("開始分析", type="primary"):
-    input_content = st.session_state["user_input"]
-    
-    if not input_content:
-        st.warning("請輸入文字")
-    else:
-        # --- 切分句子 ---
-        sentence_list = split_sentences(input_content)
-        
-        # 準備收集所有句子的結果 (給 CSV 用)
-        all_csv_data = []
-        all_csv_data.append(["Line", "Content"])
-
-        # 逐句處理
-        for idx, single_sentence in enumerate(sentence_list):
+        c_ai1, c_ai2 = st.columns(2)
+        with c_ai1:
+            topic = st.text_input("劇本主題", value="請根據資料寫一段族語教學對話")
+        with c_ai2:
+            role_a = st.text_input("角色 A (解說者)", value="老師")
             
-            # 顯示句子編號
-            if len(sentence_list) > 1:
-                st.markdown(f"#### 句子 {idx + 1}")
-
-            with st.spinner(f"分析中... ({idx+1}/{len(sentence_list)})"):
-                # 1. 判斷語言模式
-                is_chinese = any("\u4e00" <= char <= "\u9fff" for char in single_sentence)
-                
-                source_text = single_sentence
-                translation_text = ""
-
-                # 2. 中文 -> 族語 (AI 翻譯)
-                if is_chinese:
-                    if not apiKey:
-                        st.error("需要 API Key 才能翻譯中文。")
-                        st.stop()
-                    
-                    ai_result = call_ai_translation(source_text, 'truku', "", apiKey)
-                    
-                    if ai_result and not ai_result.startswith("ERROR:"):
-                        translation_text = source_text
-                        source_text = ai_result
-                    else:
-                        st.warning(f"翻譯失敗: {ai_result}")
-                        translation_text = "(翻譯失敗)"
-
-                # 3. 構詞分析
-                clean_text = re.sub(r'[.,?!;:，。？！；：]', '', source_text).lower()
-                raw_words = source_text.split()
-                
-                analyzed_words = []
-                for word in raw_words:
-                    clean_word = re.sub(r'[.,?!;:，。？！；：]', '', word).lower()
-                    if clean_word in DICTIONARY:
-                        data = DICTIONARY[clean_word]
-                        analyzed_words.append({"original": word, "morph": data["morph"], "gloss": data["gloss"], "meaning": data["meaning"]})
-                    else:
-                        guess = analyze_morphology(clean_word)
-                        analyzed_words.append({"original": word, "morph": guess["morph"], "gloss": guess["gloss"], "meaning": guess["meaning"]})
-
-                # 4. 族語 -> 中文 (AI 翻譯)
-                if not is_chinese:
-                    gloss_context = " ".join([f"{w['original']}({w['gloss']}/{w['meaning']})" for w in analyzed_words if w['gloss'] != "???"])
-                    
-                    if apiKey:
-                        ai_result = call_ai_translation(source_text, 'chinese', gloss_context, apiKey)
-                        if ai_result and not ai_result.startswith("ERROR:"):
-                             translation_text = ai_result
-                        else:
-                             translation_text = "(翻譯失敗)"
-                    else:
-                        translation_text = "(未設定 API Key)"
-
-                # 5. 顯示結果 (區塊) - 修正文字顏色以適應深色模式
-                html_output = f"""
-                <div style="font-family: monospace; font-size: 16px; line-height: 1.8; background-color: #f8f9fa; color: #1f2937; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-                    <div style="margin-bottom: 8px;"><span style="color: #e11d48; font-weight: bold;">●</span> {' '.join([w['original'] for w in analyzed_words])}</div>
-                    <div style="margin-bottom: 8px;"><span style="color: #2563eb; font-weight: bold;">●</span> {' '.join([w['morph'] for w in analyzed_words])}</div>
-                    <div style="margin-bottom: 8px;"><span style="color: #059669; font-weight: bold;">●</span> {' '.join([w['gloss'] for w in analyzed_words])}</div>
-                    <div style="margin-top: 12px; font-weight: bold; border-top: 1px solid #e5e7eb; padding-top: 8px;"><span style="color: #d97706;">●</span> {translation_text}</div>
-                </div>
-                """
-                st.markdown(html_output, unsafe_allow_html=True)
-
-                # 收集 CSV 資料
-                all_csv_data.append([f"Sentence {idx+1} - Line 1", ' '.join([w['original'] for w in analyzed_words])])
-                all_csv_data.append([f"Sentence {idx+1} - Line 2", ' '.join([w['morph'] for w in analyzed_words])])
-                all_csv_data.append([f"Sentence {idx+1} - Line 3", ' '.join([w['gloss'] for w in analyzed_words])])
-                all_csv_data.append([f"Sentence {idx+1} - Line 4", translation_text])
-                all_csv_data.append(["---", "---"]) # 分隔線
-
-        # 6. 匯出功能 (CSV) - 整合所有句子
-        df_export = pd.DataFrame(all_csv_data)
-        csv = df_export.to_csv(index=False, header=False).encode('utf-8-sig')
-        
-        st.download_button(
-            label="匯出 Excel (CSV)",
-            data=csv,
-            file_name='truku_analysis_full.csv',
-            mime='text/csv',
+        # 🔧 更新模型選擇器：全免費陣容
+        model_choice = st.selectbox(
+            "選擇 AI 模型", 
+            [
+                "gemini-1.5-flash",     # 首選：最快、免費額度最多
+                "gemini-1.5-pro",       # 次選：更聰明
+                "gemini-2.0-flash-exp", # 嘗鮮：最新版 (不穩)
+                "gemini-1.0-pro"        # 備援：舊版
+            ],
+            index=0,
+            help="建議使用 1.5-flash，這是目前 Google 最穩定且免費額度最高的模型。"
         )
+            
+    if st.button("🚀 AI 生成劇本", type="primary", disabled=not api_key, use_container_width=True):
+        if not context_text:
+            st.warning("請提供參考資料")
+        else:
+            try:
+                with st.spinner(f"正在使用 {model_choice} 生成劇本..."):
+                    script_data = generate_script_with_gemini(api_key, context_text, topic, model_choice, role_a_name=role_a)
+                    st.session_state['dialogue_list'] = script_data
+                    st.success(f"生成成功！共 {len(script_data)} 句。")
+                    st.info("💡 請切換到「🎙️ 開始合成」分頁查看結果。")
+                    with st.expander("查看生成內容", expanded=True):
+                        st.json(script_data)
+            except Exception as e:
+                st.error(f"生成失敗: {e}")
+                st.caption(f"錯誤提示：請檢查 API Key，或嘗試切換至 gemini-1.5-flash。")
 
-st.markdown("---")
-st.caption("資料來源參考：《太魯閣語語法概論》 | 設計用途：族語教學與語料保存")
+# ==========================================
+# 分頁 2: TTS 合成
+# ==========================================
+with tab_tts:
+    st.markdown("### 步驟 2：檢查並合成語音")
+    
+    if not st.session_state['dialogue_list']:
+        st.info("👋 請先在「🤖 AI 寫劇本」分頁生成內容，或在此手動輸入。")
+        
+    for i, line in enumerate(st.session_state['dialogue_list']):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([2, 3, 3])
+            c1.write(f"**#{i+1} {line['speaker'].split('_')[1]}**") 
+            line['text'] = c2.text_input("族語", line['text'], key=f"ai_tx_{i}", label_visibility="collapsed")
+            line['zh'] = c3.text_input("中文", line.get('zh',''), key=f"ai_zh_{i}", label_visibility="collapsed")
+
+    with st.container(border=True):
+        c_set1, c_set2 = st.columns(2)
+        with c_set1:
+            bgm_file = st.file_uploader("背景音樂 (BGM)", type=["mp3", "wav"])
+            bgm_vol = st.slider("音量", 0.05, 0.5, 0.15, 0.05)
+        with c_set2:
+            zh_gender = st.radio("中文配音", ["女聲", "男聲"], index=0, horizontal=True)
+            gap_time = st.slider("翻譯間隔", 0.1, 2.0, 0.5)
+
+    if st.button("🎙️ 開始合成 (雙語模式)", type="primary", use_container_width=True):
+        dialogue = st.session_state['dialogue_list']
+        if not dialogue: st.warning("無內容")
+        else:
+            try:
+                progress = st.progress(0)
+                status = st.status("🚀 製作中...", expanded=True)
+                clips = []
+                
+                for idx, item in enumerate(dialogue):
+                    txt = clean_text(item['text'])
+                    zh = clean_text(item.get('zh', ''))
+                    if not txt: continue
+                    
+                    status.write(f"合成 #{idx+1} [族語]...")
+                    path =
