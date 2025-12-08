@@ -214,8 +214,9 @@ def generate_script_with_gemini(api_key, context_text, topic, role_a_name="老�
 st.set_page_config(page_title="Podcast-015 AI", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
-    # ✅ 修正：移除 []()，直接使用網址
+    # ✅ 修正：移除 []()，直接使用網址字串
     st.image("[https://img.icons8.com/color/96/microphone.png](https://img.icons8.com/color/96/microphone.png)", width=80)
+    
     st.title("原語 Podcast")
     st.markdown("### 🇹🇼 臺灣原住民族語生成器")
     
