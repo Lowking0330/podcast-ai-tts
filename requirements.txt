@@ -6,3 +6,5 @@ gTTS
 pandas
 openpyxl
 nest_asyncio
+google-generativeai
+PyPDF2
