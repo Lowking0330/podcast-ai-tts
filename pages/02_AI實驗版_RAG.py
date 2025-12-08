@@ -105,6 +105,60 @@ def synthesize_indigenous_speech(tribe, speaker, text):
     return path
 
 # ---------------------------------------------------------
+# Excel/Txt 處理
+# ---------------------------------------------------------
+def convert_df_to_excel(dialogue_list):
+    df = pd.DataFrame(dialogue_list)
+    df = df.rename(columns={'tribe': '族群', 'speaker': '語者', 'text': '族語內容', 'zh': '中文翻譯'})
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Script')
+    return output.getvalue()
+
+def convert_list_to_txt(dialogue_list):
+    txt_content = ""
+    for item in dialogue_list:
+        zh_part = f" | {item.get('zh', '')}" if item.get('zh') else ""
+        txt_content += f"{item['text']}{zh_part}\n"
+    return txt_content
+
+def parse_uploaded_file(uploaded_file):
+    try:
+        filename = uploaded_file.name
+        new_data = []
+        default_tribe = '阿美'
+        default_speaker = '阿美_秀姑巒_女聲1'
+
+        if filename.endswith('.xlsx'):
+            df = pd.read_excel(uploaded_file)
+            for _, row in df.iterrows():
+                tribe = row.get('族群') or row.get('tribe') or default_tribe
+                speaker = row.get('語者') or row.get('speaker') or default_speaker
+                text = row.get('族語內容') or row.get('text') or ''
+                zh = row.get('中文翻譯') or row.get('zh') or ''
+                if pd.notna(text) and str(text).strip():
+                    new_data.append({
+                        'tribe': str(tribe), 'speaker': str(speaker),
+                        'text': str(text), 'zh': str(zh) if pd.notna(zh) else ""
+                    })
+        elif filename.endswith('.txt'):
+            stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
+            for line in stringio:
+                line = line.strip()
+                if not line: continue
+                parts = line.split('|')
+                raw = parts[0].strip()
+                zh = parts[1].strip() if len(parts) > 1 else ""
+                new_data.append({
+                    'tribe': default_tribe, 'speaker': default_speaker,
+                    'text': raw, 'zh': zh
+                })
+        return new_data
+    except Exception as e:
+        st.error(f"檔案解析失敗: {e}")
+        return None
+
+# ---------------------------------------------------------
 # 🔧 AI 腳本生成函式 (RAG Core)
 # ---------------------------------------------------------
 def read_pdf(file):
@@ -160,8 +214,9 @@ def generate_script_with_gemini(api_key, context_text, topic, model_name, role_a
 st.set_page_config(page_title="Podcast-015 AI", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
-    # 純文字標題 (無圖片錯誤)
+    # ✅ 修正：這是導致錯誤的那一行，已經修復為純網址
     st.image("[https://img.icons8.com/color/96/microphone.png](https://img.icons8.com/color/96/microphone.png)", width=80)
+    
     st.title("原語 Podcast")
     st.markdown("### 🇹🇼 臺灣原住民族語生成器")
     
@@ -230,17 +285,17 @@ with tab_ai:
         with c_ai2:
             role_a = st.text_input("角色 A (解說者)", value="老師")
             
-        # 🔧 更新模型選擇器：全免費陣容
         model_choice = st.selectbox(
             "選擇 AI 模型", 
             [
-                "gemini-1.5-flash",     # 首選：最快、免費額度最多
-                "gemini-1.5-pro",       # 次選：更聰明
-                "gemini-2.0-flash-exp", # 嘗鮮：最新版 (不穩)
-                "gemini-1.0-pro"        # 備援：舊版
+                "gemini-3-pro-preview",
+                "gemini-2.5-pro",
+                "gemini-2.0-flash-exp",
+                "gemini-1.5-pro",
+                "gemini-1.5-flash"
             ],
             index=0,
-            help="建議使用 1.5-flash，這是目前 Google 最穩定且免費額度最高的模型。"
+            help="若出現 404 錯誤，代表您的帳號尚未開通該預覽版模型，請切換回 1.5 Pro。"
         )
             
     if st.button("🚀 AI 生成劇本", type="primary", disabled=not api_key, use_container_width=True):
@@ -257,7 +312,7 @@ with tab_ai:
                         st.json(script_data)
             except Exception as e:
                 st.error(f"生成失敗: {e}")
-                st.caption(f"錯誤提示：請檢查 API Key，或嘗試切換至 gemini-1.5-flash。")
+                st.caption(f"錯誤提示：如果您選用了 {model_choice} 卻失敗，請嘗試切換至 gemini-1.5-pro。")
 
 # ==========================================
 # 分頁 2: TTS 合成
