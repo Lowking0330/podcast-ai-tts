@@ -219,7 +219,7 @@ with tab1:
     if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single", help="快速填入阿美族問候語"):
         st.session_state['s1_tribe_idx'] = 0 # 阿美
         st.session_state['s1_speaker_idx'] = 4 # 秀姑巒女聲1 (Index 4)
-        st.session_state['s1_text_val'] = "Nga'ay ho! Kicey kiso haw?" 
+        st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
         st.rerun()
 
     # 預設值調整
