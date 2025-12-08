@@ -299,4 +299,42 @@ with tab_tts:
                     if not txt: continue
                     
                     status.write(f"合成 #{idx+1} [族語]...")
-                    path =
+                    path = synthesize_indigenous_speech(item['tribe'], item['speaker'], txt)
+                    clip_ind = AudioFileClip(path)
+                    clips.append(clip_ind)
+                    
+                    if zh:
+                        status.write(f"合成 #{idx+1} [中文]...")
+                        clips.append(AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100))
+                        tmp_zh = tempfile.mktemp(suffix=".mp3")
+                        success, _ = generate_chinese_audio_free_tier(zh, zh_gender, tmp_zh)
+                        if success and os.path.exists(tmp_zh):
+                            clips.append(AudioFileClip(tmp_zh))
+                    
+                    clips.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100))
+                    progress.progress((idx+1)/len(dialogue))
+                
+                if clips:
+                    status.write("🎵 混音中...")
+                    final = concatenate_audioclips(clips)
+                    if bgm_file:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                            tmp.write(bgm_file.getvalue())
+                            tpath = tmp.name
+                        music = AudioFileClip(tpath)
+                        if music.duration < final.duration:
+                            music = concatenate_audioclips([music] * (int(final.duration/music.duration)+1))
+                        music = music.subclipped(0, final.duration+1).with_volume_scaled(bgm_vol)
+                        final = CompositeAudioClip([music, final])
+                        os.remove(tpath)
+                    
+                    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    final.write_audiofile(tf.name, logger=None, fps=44100)
+                    for c in clips: c.close()
+                    final.close()
+                    
+                    status.update(label="✅ 完成！", state="complete", expanded=False)
+                    st.audio(tf.name)
+                    with open(tf.name, "rb") as f:
+                        st.download_button("📥 下載 MP3", f, "ai_podcast.mp3", "audio/mp3", use_container_width=True)
+            except Exception as e: st.error(f"錯誤: {e}")
