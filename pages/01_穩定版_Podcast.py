@@ -73,62 +73,58 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 🔧 核心：中文語音生成 (多重鏡像備援版)
+# 🔧 核心：中文語音生成 (嘗試 k2-fsa/ZipVoice 技術)
 # ---------------------------------------------------------
-def generate_chinese_audio_multisource(text, gender, output_path):
+def generate_chinese_audio_k2fsa(text, gender, output_path):
     """
-    依序嘗試多個 Edge-TTS 鏡像站。
-    如果全部失敗，才使用 gTTS。
+    嘗試使用 Hugging Face 上的 k2-fsa/text-to-speech Space.
+    這是一個基於 Sherpa-ONNX 的輕量級 TTS。
     """
-    
-    # 1. 定義語者代碼
-    voice_id = "zh-TW-YunJheNeural" if gender == "男聲" else "zh-TW-HsiaoChenNeural"
-    
-    # 2. 定義備援清單 (這些都是 Hugging Face 上的 Edge-TTS 服務)
-    # 順序：主要 -> 備援1 -> 備援2
-    mirrors = [
-        "r3gm/Edge-TTS-Text-to-Speech",       # Mirror 1
-        "trapoom555/Edge-TTS-Text-to-Speech", # Mirror 2
-        "collabora/Edge-TTS"                  # Mirror 3
-    ]
-    
-    # 3. 嘗試迴圈
-    for space_url in mirrors:
-        try:
-            print(f"Trying Mirror: {space_url}...")
-            client = Client(space_url)
-            
-            # 呼叫 API (大部分 EdgeTTS Space 的參數結構都一樣)
-            result = client.predict(
-                text,
-                voice_id,
-                0, # Rate
-                0, # Pitch
-                api_name="/predict"
-            )
-            
-            # 取得檔案路徑
-            audio_file = result
-            if isinstance(result, tuple) or isinstance(result, list):
-                audio_file = result[0]
-                
-            if os.path.exists(audio_file):
-                shutil.copy(audio_file, output_path)
-                return True, f"Edge-TTS ({space_url})" # 回傳成功訊息與來源
-                
-        except Exception as e:
-            print(f"Mirror {space_url} failed: {e}")
-            continue # 失敗就換下一個
-            
-    # 4. 如果 3 個鏡像都失敗，使用 gTTS (Google)
     try:
-        print("All mirrors failed. Fallback to gTTS.")
-        tts = gTTS(text=text, lang='zh-tw')
-        tts.save(output_path)
-        is_downgrade = (gender == "男聲")
-        return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
-    except Exception as e2:
-        return False, f"All Failed: {e2}"
+        print("Connecting to k2-fsa Space...")
+        client = Client("k2-fsa/text-to-speech")
+        
+        # 決定語速 (Speed)
+        speed = 1.0
+        
+        # 決定模型 ID
+        # 注意：這個 Space 的模型列表可能會變，我們嘗試使用一個通用的中文模型
+        # 如果要區分男女，通常需要指定不同的 speaker ID (SID)
+        # 在 VITS 模型中，SID 0 通常是女聲，SID 1 或其他可能是男聲
+        sid = 12 if gender == "男聲" else 0  # 嘗試設定不同的 Speaker ID
+        
+        # 呼叫預測
+        # 參數通常是: Text, Model, SID, Speed
+        result = client.predict(
+            text,	# str  in 'Input Text' Textbox component
+            "csukuangfj/vits-zh-hf-doom",	# str (Option from: ['csukuangfj/vits-zh-hf-doom', ...])
+            sid,	# float  in 'Speaker ID' Number component
+            speed,	# float  in 'Speed' Number component
+            api_name="/predict"
+        )
+        
+        # 處理回傳
+        audio_file = result
+        if isinstance(result, tuple) or isinstance(result, list):
+            audio_file = result[0]
+            
+        if os.path.exists(audio_file):
+            shutil.copy(audio_file, output_path)
+            return True, "k2-fsa (Sherpa)"
+            
+        return False, "File Error"
+
+    except Exception as e:
+        print(f"k2-fsa Failed: {e}")
+        
+        # --- 失敗備援：gTTS (Google) ---
+        try:
+            tts = gTTS(text=text, lang='zh-tw')
+            tts.save(output_path)
+            is_downgrade = (gender == "男聲")
+            return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
+        except Exception as e2:
+            return False, f"All Failed: {e2}"
 
 def synthesize_indigenous_speech(tribe, speaker, text):
     client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
@@ -195,7 +191,7 @@ def parse_uploaded_file(uploaded_file):
 # ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-019 Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Podcast-020 Pro", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/microphone.png", width=80)
@@ -224,7 +220,7 @@ with st.sidebar:
         
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-019 | 核心: Multi-Mirror")
+    st.caption("版本: Podcast-020 | 核心: k2-fsa (Sherpa)")
 
 # 主標題
 st.title("🎙️ 族語Podcast內容產製程式")
@@ -511,8 +507,8 @@ with tab3:
                         
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
                         
-                        # 🔧 呼叫多重備援合成器
-                        success, engine_name = generate_chinese_audio_multisource(zh, zh_gender, tmp_zh_path)
+                        # 🔧 呼叫 k2-fsa 實驗功能
+                        success, engine_name = generate_chinese_audio_k2fsa(zh, zh_gender, tmp_zh_path)
                         
                         if success and os.path.exists(tmp_zh_path):
                             clip_zh = AudioFileClip(tmp_zh_path)
@@ -520,9 +516,9 @@ with tab3:
                             
                             # 顯示通知
                             if engine_name == "gTTS-Fallback":
-                                st.toast(f"⚠️ #{idx+1} 所有鏡像站忙碌，降級為 Google 女聲", icon="ℹ️")
-                            elif "Edge-TTS" in engine_name:
-                                st.toast(f"✅ #{idx+1} 使用 Edge-TTS (男聲) 成功", icon="🎙️")
+                                st.toast(f"⚠️ #{idx+1} k2-fsa 失敗，降級為 Google 女聲", icon="ℹ️")
+                            elif engine_name == "k2-fsa (Sherpa)":
+                                st.toast(f"✅ #{idx+1} 使用 k2-fsa 合成成功", icon="🎙️")
                         else:
                             st.warning(f"#{idx+1} 中文合成失敗")
                     
