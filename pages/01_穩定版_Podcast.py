@@ -80,37 +80,39 @@ def generate_chinese_audio_chattts(text, gender, output_path):
     使用 Hugging Face 上的 ChatTTS Space (免費/有男聲)
     """
     try:
-        # 連線到公開的 ChatTTS Space (使用 huggingface-projects 比較穩定)
-        client = Client("2Noise/ChatTTS")
+        # 嘗試連線到 ChatTTS (您可以換成 "2Noise/ChatTTS" 或 "Dzkyer/ChatTTS" 試試)
+        print("Connecting to ChatTTS Space...")
+        client = Client("Dzkyer/ChatTTS") 
         
-        # 設定種子碼 (Seed) 來決定男女聲
-        # 2222, 8888 通常是男聲
-        # 6666, 8090 通常是女聲
+        # 設定種子碼
         seed = 2222 if gender == "男聲" else 6666
         
-        # 呼叫 API
-        # 參數依序通常是: text, temperature, top_p, seed
+        # 參數依序: text, temperature, top_p, seed
+        # 注意: 不同 Space 的參數名稱可能微調，這裡是標準版
         result = client.predict(
-            text,   # str in 'Text Input' Textbox component
-            0.3,    # float (numeric value between 0.1 and 1.0) in 'Temperature' Slider component
-            0.7,    # float (numeric value between 0.1 and 1.0) in 'Top P' Slider component
-            seed,   # float (numeric value between 0 and 100000000) in 'Seed' Number component
+            text, 
+            0.3, 
+            0.7, 
+            seed, 
             api_name="/generate_audio"
         )
         
-        # Result 通常是 (audio_filepath, video_filepath) 或單一 filepath
-        # 我們檢查並複製檔案
+        # 處理回傳結果
         audio_file = result
         if isinstance(result, tuple) or isinstance(result, list):
             audio_file = result[0]
             
         if os.path.exists(audio_file):
             shutil.copy(audio_file, output_path)
-            return True
-        return False
+            return True, "Success"
+            
+        return False, "File not found"
+        
     except Exception as e:
-        print(f"ChatTTS Error: {e}")
-        return False
+        # 這裡會捕捉錯誤訊息 (例如 Queue is full, Timeout 等)
+        error_msg = str(e)
+        print(f"ChatTTS Error: {error_msg}")
+        return False, error_msg
 
 def generate_chinese_audio_smart_v2(text, gender, output_path):
     """
@@ -133,10 +135,14 @@ def generate_chinese_audio_smart_v2(text, gender, output_path):
     #     pass 
 
     # --- 2. 直接嘗試 Hugging Face ChatTTS ---
-    print("Force testing ChatTTS...") # 這行會出現在 Logs
-    success = generate_chinese_audio_chattts(text, gender, output_path)
+    print("Edge-TTS failed, trying ChatTTS...")
+    # 接收錯誤訊息
+    success, error_reason = generate_chinese_audio_chattts(text, gender, output_path)
     if success:
         return True, "ChatTTS (HF)"
+    else:
+        # 在後台印出失敗原因，方便除錯
+        print(f"ChatTTS failed reason: {error_reason}")
 
     # --- 3. 嘗試 gTTS (最後防線) ---
     print("ChatTTS failed, using gTTS...")
