@@ -73,86 +73,57 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 🔧 核心：中文語音生成 (三段式備援：Edge -> ChatTTS -> gTTS)
+# 🔧 核心：中文語音生成 (外包給 Hugging Face Edge-TTS)
 # ---------------------------------------------------------
-def generate_chinese_audio_chattts(text, gender, output_path):
+def generate_chinese_audio_remote(text, gender, output_path):
     """
-    使用 Hugging Face 上的 ChatTTS Space (免費/有男聲)
+    不使用本地 Edge-TTS，改為呼叫 Hugging Face 上的 API。
+    這能避開 Streamlit Cloud 的環境限制。
     """
+    
+    # 1. 設定語者
+    # Edge-TTS 的標準代碼
+    voice_id = "zh-TW-YunJheNeural" if gender == "男聲" else "zh-TW-HsiaoChenNeural"
+    
+    # 2. 嘗試連線到 HF Space
     try:
-        # 嘗試連線到 ChatTTS (您可以換成 "2Noise/ChatTTS" 或 "Dzkyer/ChatTTS" 試試)
-        print("Connecting to ChatTTS Space...")
-        client = Client("Dzkyer/ChatTTS") 
+        print(f"Connecting to Remote Edge-TTS ({gender})...")
         
-        # 設定種子碼
-        seed = 2222 if gender == "男聲" else 6666
+        # 這是網路上穩定運行的 Edge-TTS 鏡像站
+        client = Client("r3gm/Edge-TTS-Text-to-Speech")
         
-        # 參數依序: text, temperature, top_p, seed
-        # 注意: 不同 Space 的參數名稱可能微調，這裡是標準版
+        # 呼叫 API
+        # 參數通常是: Text, Voice, Rate(0), Pitch(0)
         result = client.predict(
-            text, 
-            0.3, 
-            0.7, 
-            seed, 
-            api_name="/generate_audio"
+            text,
+            voice_id,
+            0, # Rate
+            0, # Pitch
+            api_name="/predict"
         )
         
-        # 處理回傳結果
+        # 處理回傳 (通常是暫存檔路徑)
         audio_file = result
         if isinstance(result, tuple) or isinstance(result, list):
-            audio_file = result[0]
+            audio_file = result[0] # 取第一個回傳值
             
         if os.path.exists(audio_file):
             shutil.copy(audio_file, output_path)
-            return True, "Success"
+            return True, "Edge-TTS (Remote)"
             
-        return False, "File not found"
-        
+        return False, "Remote File Error"
+
     except Exception as e:
-        # 這裡會捕捉錯誤訊息 (例如 Queue is full, Timeout 等)
-        error_msg = str(e)
-        print(f"ChatTTS Error: {error_msg}")
-        return False, error_msg
-
-def generate_chinese_audio_smart_v2(text, gender, output_path):
-    """
-    修改版：強制跳過 Edge-TTS，直接測試 ChatTTS
-    """
-    
-    # --- 1. 暫時關閉 Edge-TTS (Force Skip) ---
-    # edge_voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
-    # command = [
-    #     sys.executable, "-m", "edge_tts",
-    #     "--text", text,
-    #     "--voice", edge_voice,
-    #     "--write-media", output_path
-    # ]
-    # try:
-    #     subprocess.run(command, check=True, capture_output=True, timeout=5)
-    #     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-    #         return True, "Edge-TTS"
-    # except:
-    #     pass 
-
-    # --- 2. 直接嘗試 Hugging Face ChatTTS ---
-    print("Edge-TTS failed, trying ChatTTS...")
-    # 接收錯誤訊息
-    success, error_reason = generate_chinese_audio_chattts(text, gender, output_path)
-    if success:
-        return True, "ChatTTS (HF)"
-    else:
-        # 在後台印出失敗原因，方便除錯
-        print(f"ChatTTS failed reason: {error_reason}")
-
-    # --- 3. 嘗試 gTTS (最後防線) ---
-    print("ChatTTS failed, using gTTS...")
-    try:
-        tts = gTTS(text=text, lang='zh-tw')
-        tts.save(output_path)
-        is_downgrade = (gender == "男聲")
-        return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
-    except:
-        return False, "Error"
+        print(f"Remote Edge-TTS Failed: {e}")
+        
+        # --- 3. 失敗備援：gTTS (Google) ---
+        try:
+            tts = gTTS(text=text, lang='zh-tw')
+            tts.save(output_path)
+            is_downgrade = (gender == "男聲")
+            return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
+        except Exception as e2:
+            return False, f"All Failed: {e2}"
 
 def synthesize_indigenous_speech(tribe, speaker, text):
     client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
@@ -163,7 +134,7 @@ def synthesize_indigenous_speech(tribe, speaker, text):
     return path
 
 # ---------------------------------------------------------
-# Excel/Txt 處理函式 (預設值修正)
+# Excel/Txt 處理
 # ---------------------------------------------------------
 def convert_df_to_excel(dialogue_list):
     df = pd.DataFrame(dialogue_list)
@@ -217,9 +188,9 @@ def parse_uploaded_file(uploaded_file):
         return None
 
 # ---------------------------------------------------------
-# 2. 介面初始化 (側邊欄大更新)
+# 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-017 Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Podcast-018 Pro", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/microphone.png", width=80)
@@ -248,7 +219,7 @@ with st.sidebar:
         
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-017 | 核心: HF ChatTTS")
+    st.caption("版本: Podcast-018 | 核心: Edge-TTS Remote")
 
 # 主標題
 st.title("🎙️ 族語Podcast內容產製程式")
@@ -535,17 +506,18 @@ with tab3:
                         
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
                         
-                        # 🔧 呼叫智慧合成器 v2 (Edge -> ChatTTS -> gTTS)
-                        success, engine_name = generate_chinese_audio_smart_v2(zh, zh_gender, tmp_zh_path)
+                        # 🔧 呼叫遠端 Edge-TTS
+                        success, engine_name = generate_chinese_audio_remote(zh, zh_gender, tmp_zh_path)
                         
                         if success and os.path.exists(tmp_zh_path):
                             clip_zh = AudioFileClip(tmp_zh_path)
                             clips.append(clip_zh)
-                            # 如果想要男聲卻降級為 gTTS (女聲)，顯示提示
+                            
+                            # 顯示通知
                             if engine_name == "gTTS-Fallback":
-                                st.toast(f"⚠️ #{idx+1} 系統繁忙，已降級為 Google 女聲", icon="ℹ️")
-                            elif engine_name == "ChatTTS (HF)":
-                                st.toast(f"✅ #{idx+1} 使用 HuggingFace 男聲合成", icon="🎙️")
+                                st.toast(f"⚠️ #{idx+1} 遠端伺服器忙碌，降級為 Google 女聲", icon="ℹ️")
+                            elif engine_name == "Edge-TTS (Remote)":
+                                st.toast(f"✅ #{idx+1} 使用微軟 Edge-TTS (男聲) 合成成功", icon="🎙️")
                         else:
                             st.warning(f"#{idx+1} 中文合成失敗")
                     
