@@ -114,31 +114,26 @@ def generate_chinese_audio_chattts(text, gender, output_path):
 
 def generate_chinese_audio_smart_v2(text, gender, output_path):
     """
-    整合版生成器：
-    1. 嘗試 Edge-TTS (微軟, 最快)
-    2. 嘗試 ChatTTS (HuggingFace, 有男聲)
-    3. 嘗試 gTTS (Google, 僅女聲)
+    修改版：強制跳過 Edge-TTS，直接測試 ChatTTS
     """
     
-    # --- 1. 嘗試 Edge-TTS ---
-    edge_voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
-    command = [
-        sys.executable, "-m", "edge_tts",
-        "--text", text,
-        "--voice", edge_voice,
-        "--write-media", output_path
-    ]
-    try:
-        # Timeout 設短一點，失敗就趕快換下一個
-        subprocess.run(command, check=True, capture_output=True, timeout=5)
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return True, "Edge-TTS"
-    except:
-        pass # Edge 失敗，安靜地進入下一關
+    # --- 1. 暫時關閉 Edge-TTS (Force Skip) ---
+    # edge_voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
+    # command = [
+    #     sys.executable, "-m", "edge_tts",
+    #     "--text", text,
+    #     "--voice", edge_voice,
+    #     "--write-media", output_path
+    # ]
+    # try:
+    #     subprocess.run(command, check=True, capture_output=True, timeout=5)
+    #     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+    #         return True, "Edge-TTS"
+    # except:
+    #     pass 
 
-    # --- 2. 嘗試 Hugging Face ChatTTS (解決男聲問題) ---
-    # 只有當 Edge 失敗時才走這裡
-    print("Edge-TTS failed, trying ChatTTS...")
+    # --- 2. 直接嘗試 Hugging Face ChatTTS ---
+    print("Force testing ChatTTS...") # 這行會出現在 Logs
     success = generate_chinese_audio_chattts(text, gender, output_path)
     if success:
         return True, "ChatTTS (HF)"
@@ -148,7 +143,7 @@ def generate_chinese_audio_smart_v2(text, gender, output_path):
     try:
         tts = gTTS(text=text, lang='zh-tw')
         tts.save(output_path)
-        is_downgrade = (gender == "男聲") # 如果要男聲卻掉到這裡，代表降級了
+        is_downgrade = (gender == "男聲")
         return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
     except:
         return False, "Error"
