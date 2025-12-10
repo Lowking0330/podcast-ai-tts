@@ -73,57 +73,62 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 🔧 核心：中文語音生成 (外包給 Hugging Face Edge-TTS)
+# 🔧 核心：中文語音生成 (多重鏡像備援版)
 # ---------------------------------------------------------
-def generate_chinese_audio_remote(text, gender, output_path):
+def generate_chinese_audio_multisource(text, gender, output_path):
     """
-    不使用本地 Edge-TTS，改為呼叫 Hugging Face 上的 API。
-    這能避開 Streamlit Cloud 的環境限制。
+    依序嘗試多個 Edge-TTS 鏡像站。
+    如果全部失敗，才使用 gTTS。
     """
     
-    # 1. 設定語者
-    # Edge-TTS 的標準代碼
+    # 1. 定義語者代碼
     voice_id = "zh-TW-YunJheNeural" if gender == "男聲" else "zh-TW-HsiaoChenNeural"
     
-    # 2. 嘗試連線到 HF Space
-    try:
-        print(f"Connecting to Remote Edge-TTS ({gender})...")
-        
-        # 這是網路上穩定運行的 Edge-TTS 鏡像站
-        client = Client("r3gm/Edge-TTS-Text-to-Speech")
-        
-        # 呼叫 API
-        # 參數通常是: Text, Voice, Rate(0), Pitch(0)
-        result = client.predict(
-            text,
-            voice_id,
-            0, # Rate
-            0, # Pitch
-            api_name="/predict"
-        )
-        
-        # 處理回傳 (通常是暫存檔路徑)
-        audio_file = result
-        if isinstance(result, tuple) or isinstance(result, list):
-            audio_file = result[0] # 取第一個回傳值
-            
-        if os.path.exists(audio_file):
-            shutil.copy(audio_file, output_path)
-            return True, "Edge-TTS (Remote)"
-            
-        return False, "Remote File Error"
-
-    except Exception as e:
-        print(f"Remote Edge-TTS Failed: {e}")
-        
-        # --- 3. 失敗備援：gTTS (Google) ---
+    # 2. 定義備援清單 (這些都是 Hugging Face 上的 Edge-TTS 服務)
+    # 順序：主要 -> 備援1 -> 備援2
+    mirrors = [
+        "r3gm/Edge-TTS-Text-to-Speech",       # Mirror 1
+        "trapoom555/Edge-TTS-Text-to-Speech", # Mirror 2
+        "collabora/Edge-TTS"                  # Mirror 3
+    ]
+    
+    # 3. 嘗試迴圈
+    for space_url in mirrors:
         try:
-            tts = gTTS(text=text, lang='zh-tw')
-            tts.save(output_path)
-            is_downgrade = (gender == "男聲")
-            return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
-        except Exception as e2:
-            return False, f"All Failed: {e2}"
+            print(f"Trying Mirror: {space_url}...")
+            client = Client(space_url)
+            
+            # 呼叫 API (大部分 EdgeTTS Space 的參數結構都一樣)
+            result = client.predict(
+                text,
+                voice_id,
+                0, # Rate
+                0, # Pitch
+                api_name="/predict"
+            )
+            
+            # 取得檔案路徑
+            audio_file = result
+            if isinstance(result, tuple) or isinstance(result, list):
+                audio_file = result[0]
+                
+            if os.path.exists(audio_file):
+                shutil.copy(audio_file, output_path)
+                return True, f"Edge-TTS ({space_url})" # 回傳成功訊息與來源
+                
+        except Exception as e:
+            print(f"Mirror {space_url} failed: {e}")
+            continue # 失敗就換下一個
+            
+    # 4. 如果 3 個鏡像都失敗，使用 gTTS (Google)
+    try:
+        print("All mirrors failed. Fallback to gTTS.")
+        tts = gTTS(text=text, lang='zh-tw')
+        tts.save(output_path)
+        is_downgrade = (gender == "男聲")
+        return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
+    except Exception as e2:
+        return False, f"All Failed: {e2}"
 
 def synthesize_indigenous_speech(tribe, speaker, text):
     client = Client("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
@@ -190,7 +195,7 @@ def parse_uploaded_file(uploaded_file):
 # ---------------------------------------------------------
 # 2. 介面初始化
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-018 Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Podcast-019 Pro", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/microphone.png", width=80)
@@ -219,7 +224,7 @@ with st.sidebar:
         
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-018 | 核心: Edge-TTS Remote")
+    st.caption("版本: Podcast-019 | 核心: Multi-Mirror")
 
 # 主標題
 st.title("🎙️ 族語Podcast內容產製程式")
@@ -506,8 +511,8 @@ with tab3:
                         
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
                         
-                        # 🔧 呼叫遠端 Edge-TTS
-                        success, engine_name = generate_chinese_audio_remote(zh, zh_gender, tmp_zh_path)
+                        # 🔧 呼叫多重備援合成器
+                        success, engine_name = generate_chinese_audio_multisource(zh, zh_gender, tmp_zh_path)
                         
                         if success and os.path.exists(tmp_zh_path):
                             clip_zh = AudioFileClip(tmp_zh_path)
@@ -515,9 +520,9 @@ with tab3:
                             
                             # 顯示通知
                             if engine_name == "gTTS-Fallback":
-                                st.toast(f"⚠️ #{idx+1} 遠端伺服器忙碌，降級為 Google 女聲", icon="ℹ️")
-                            elif engine_name == "Edge-TTS (Remote)":
-                                st.toast(f"✅ #{idx+1} 使用微軟 Edge-TTS (男聲) 合成成功", icon="🎙️")
+                                st.toast(f"⚠️ #{idx+1} 所有鏡像站忙碌，降級為 Google 女聲", icon="ℹ️")
+                            elif "Edge-TTS" in engine_name:
+                                st.toast(f"✅ #{idx+1} 使用 Edge-TTS (男聲) 成功", icon="🎙️")
                         else:
                             st.warning(f"#{idx+1} 中文合成失敗")
                     
