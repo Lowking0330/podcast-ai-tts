@@ -72,7 +72,55 @@ def split_long_text(text, max_chars=150):
         final_chunks.append(current_chunk.strip())
     return final_chunks
 
-def generate_chinese_audio_free_tier(text, gender, output_path):
+# ---------------------------------------------------------
+# 🔧 核心：中文語音生成 (三段式備援：Edge -> ChatTTS -> gTTS)
+# ---------------------------------------------------------
+def generate_chinese_audio_chattts(text, gender, output_path):
+    """
+    使用 Hugging Face 上的 ChatTTS Space (免費/有男聲)
+    """
+    try:
+        # 連線到公開的 ChatTTS Space (使用 huggingface-projects 比較穩定)
+        client = Client("huggingface-projects/ChatTTS-streaming")
+        
+        # 設定種子碼 (Seed) 來決定男女聲
+        # 2222, 8888 通常是男聲
+        # 6666, 8090 通常是女聲
+        seed = 2222 if gender == "男聲" else 6666
+        
+        # 呼叫 API
+        # 參數依序通常是: text, temperature, top_p, seed
+        result = client.predict(
+            text,   # str in 'Text Input' Textbox component
+            0.3,    # float (numeric value between 0.1 and 1.0) in 'Temperature' Slider component
+            0.7,    # float (numeric value between 0.1 and 1.0) in 'Top P' Slider component
+            seed,   # float (numeric value between 0 and 100000000) in 'Seed' Number component
+            api_name="/generate_audio"
+        )
+        
+        # Result 通常是 (audio_filepath, video_filepath) 或單一 filepath
+        # 我們檢查並複製檔案
+        audio_file = result
+        if isinstance(result, tuple) or isinstance(result, list):
+            audio_file = result[0]
+            
+        if os.path.exists(audio_file):
+            shutil.copy(audio_file, output_path)
+            return True
+        return False
+    except Exception as e:
+        print(f"ChatTTS Error: {e}")
+        return False
+
+def generate_chinese_audio_smart_v2(text, gender, output_path):
+    """
+    整合版生成器：
+    1. 嘗試 Edge-TTS (微軟, 最快)
+    2. 嘗試 ChatTTS (HuggingFace, 有男聲)
+    3. 嘗試 gTTS (Google, 僅女聲)
+    """
+    
+    # --- 1. 嘗試 Edge-TTS ---
     edge_voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
     command = [
         sys.executable, "-m", "edge_tts",
@@ -81,15 +129,26 @@ def generate_chinese_audio_free_tier(text, gender, output_path):
         "--write-media", output_path
     ]
     try:
-        subprocess.run(command, check=True, capture_output=True, timeout=10)
+        # Timeout 設短一點，失敗就趕快換下一個
+        subprocess.run(command, check=True, capture_output=True, timeout=5)
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return True, "Edge-TTS"
-    except: pass
-    
+    except:
+        pass # Edge 失敗，安靜地進入下一關
+
+    # --- 2. 嘗試 Hugging Face ChatTTS (解決男聲問題) ---
+    # 只有當 Edge 失敗時才走這裡
+    print("Edge-TTS failed, trying ChatTTS...")
+    success = generate_chinese_audio_chattts(text, gender, output_path)
+    if success:
+        return True, "ChatTTS (HF)"
+
+    # --- 3. 嘗試 gTTS (最後防線) ---
+    print("ChatTTS failed, using gTTS...")
     try:
         tts = gTTS(text=text, lang='zh-tw')
         tts.save(output_path)
-        is_downgrade = (gender == "男聲")
+        is_downgrade = (gender == "男聲") # 如果要男聲卻掉到這裡，代表降級了
         return True, ("gTTS-Fallback" if is_downgrade else "gTTS")
     except:
         return False, "Error"
@@ -124,7 +183,6 @@ def parse_uploaded_file(uploaded_file):
     try:
         filename = uploaded_file.name
         new_data = []
-        # 設定讀取失敗時的預設值為 秀姑巒阿美
         default_tribe = '阿美'
         default_speaker = '阿美_秀姑巒_女聲1'
 
@@ -160,7 +218,7 @@ def parse_uploaded_file(uploaded_file):
 # ---------------------------------------------------------
 # 2. 介面初始化 (側邊欄大更新)
 # ---------------------------------------------------------
-st.set_page_config(page_title="Podcast-013 Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Podcast-017 Pro", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/microphone.png", width=80)
@@ -189,13 +247,12 @@ with st.sidebar:
         
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-013 | 核心: Free Tier")
+    st.caption("版本: Podcast-017 | 核心: HF ChatTTS")
 
-# 主標題 (依需求修正)
+# 主標題
 st.title("🎙️ 族語Podcast內容產製程式")
 st.markdown("打造您的專屬原住民族語廣播節目，支援 **16族42語**、**雙語教學** 與 **背景混音**。")
 
-# 預設對話列表 (預設改為秀姑巒)
 if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = []
 
@@ -218,11 +275,10 @@ with tab1:
     
     if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single", help="快速填入阿美族問候語"):
         st.session_state['s1_tribe_idx'] = 0 # 阿美
-        st.session_state['s1_speaker_idx'] = 4 # 秀姑巒女聲1 (Index 4)
+        st.session_state['s1_speaker_idx'] = 4 # 秀姑巒女聲1
         st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
         st.rerun()
 
-    # 預設值調整
     def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
     
     with st.container(border=True):
@@ -231,17 +287,11 @@ with tab1:
             s_tribe = st.selectbox("選擇族群", list(speaker_map.keys()), key="s1_tribe", index=def_tribe_idx)
         with c2:
             avail_spks = speaker_map[s_tribe]
-            # 預設抓 session state，如果沒有，且是阿美族，預設抓 index 4 (秀姑巒)
             if 's1_speaker_idx' in st.session_state:
                 def_spk_idx = st.session_state['s1_speaker_idx']
-            elif s_tribe == '阿美':
-                def_spk_idx = 4 # 預設秀姑巒
-            else:
-                def_spk_idx = 0
-            
-            # 防呆：如果切換族群導致 index 超出範圍
+            elif s_tribe == '阿美': def_spk_idx = 4
+            else: def_spk_idx = 0
             if def_spk_idx >= len(avail_spks): def_spk_idx = 0
-            
             s_speaker = st.selectbox("選擇語者", avail_spks, key="s1_speaker", index=def_spk_idx)
         
         def_text = st.session_state.get('s1_text_val', "")
@@ -260,7 +310,6 @@ with tab1:
 # 共用函式：Podcast 列表編輯器
 # ==========================================
 def render_script_editor(key_prefix):
-    # 範例按鈕 (修正為秀姑巒語者)
     if st.button("✨ 載入範例劇本 (秀姑巒阿美)", key=f"{key_prefix}_ex", use_container_width=True):
         st.session_state['dialogue_list'] = [
             {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
@@ -300,7 +349,6 @@ def render_script_editor(key_prefix):
     with st.expander("⚡ 快速劇本貼上", expanded=False):
         st.caption("格式：`A: 族語 | 中文`")
         c_r1, c_r2 = st.columns(2)
-        # 預設值修正：秀姑巒女聲1 (Index 4)
         with c_r1:
             role_a_t = st.selectbox("A 族群", list(speaker_map.keys()), key=f"{key_prefix}_ra_t", index=0)
             avail_a = speaker_map[role_a_t]
@@ -365,7 +413,6 @@ def render_script_editor(key_prefix):
 
     c_add, c_clr = st.columns([4, 1])
     if c_add.button("➕ 新增一行", key=f"{key_prefix}_add", use_container_width=True):
-        # 預設新增也是秀姑巒
         last = st.session_state['dialogue_list'][-1] if st.session_state['dialogue_list'] else {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "", "zh": ""}
         st.session_state['dialogue_list'].append(last.copy())
         st.rerun()
@@ -487,13 +534,17 @@ with tab3:
                         
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
                         
-                        success, engine_name = generate_chinese_audio_free_tier(zh, zh_gender, tmp_zh_path)
+                        # 🔧 呼叫智慧合成器 v2 (Edge -> ChatTTS -> gTTS)
+                        success, engine_name = generate_chinese_audio_smart_v2(zh, zh_gender, tmp_zh_path)
                         
                         if success and os.path.exists(tmp_zh_path):
                             clip_zh = AudioFileClip(tmp_zh_path)
                             clips.append(clip_zh)
+                            # 如果想要男聲卻降級為 gTTS (女聲)，顯示提示
                             if engine_name == "gTTS-Fallback":
                                 st.toast(f"⚠️ #{idx+1} 系統繁忙，已降級為 Google 女聲", icon="ℹ️")
+                            elif engine_name == "ChatTTS (HF)":
+                                st.toast(f"✅ #{idx+1} 使用 HuggingFace 男聲合成", icon="🎙️")
                         else:
                             st.warning(f"#{idx+1} 中文合成失敗")
                     
