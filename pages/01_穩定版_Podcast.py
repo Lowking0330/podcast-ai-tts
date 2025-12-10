@@ -81,7 +81,7 @@ def generate_chinese_audio_chattts(text, gender, output_path):
     """
     try:
         # 連線到公開的 ChatTTS Space (使用 huggingface-projects 比較穩定)
-        client = Client("huggingface-projects/ChatTTS-streaming")
+        client = Client("2Noise/ChatTTS")
         
         # 設定種子碼 (Seed) 來決定男女聲
         # 2222, 8888 通常是男聲
