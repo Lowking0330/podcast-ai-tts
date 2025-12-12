@@ -1,25 +1,38 @@
 import streamlit as st
+import streamlit.components.v1 as components  # <--- 1. 引入元件庫
 
-st.set_page_config(
-    page_title="Podcast 產製中心",
-    page_icon="🎙️",
-)
+# ... 其他 import (如 os, sys 等) ...
 
-st.title("🎙️ 歡迎來到 Podcast 產製中心")
+# ---------------------------------------------------------
+# Google Analytics 注入函式
+# ---------------------------------------------------------
+def inject_ga():
+    # 👇👇👇 請在這裡填入您的 GA4 評估 ID 👇👇👇
+    GA_ID = "G-DB6VD72CJT"
+    
+    ga_code = f"""
+    <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){{dataLayer.push(arguments);}}
+        gtag('js', new Date());
+        gtag('config', '{GA_ID}');
+    </script>
+    """
+    
+    # 這裡將 HTML/JS 代碼插入網頁，height=0 讓它隱形
+    components.html(ga_code, height=0)
 
-st.info("請展開左側的側邊欄 (Sidebar) 選擇功能頁面")
+# ---------------------------------------------------------
+# 程式主入口
+# ---------------------------------------------------------
+# 1. 設定頁面 (這行一定要在最前面)
+st.set_page_config(page_title="原語 Podcast", layout="wide", initial_sidebar_state="expanded")
 
-st.markdown("""
-### 👈 請從左側選單選擇：
+# 2. 啟動 GA 分析 (放在 set_page_config 之後，介面渲染之前)
+inject_ga()
 
-#### 1. 📄 穩定版_Podcast
-> 這是您原本運作正常的功能（單句、對話、長文）。
-> 如果不想測試新功能，請直接用這個。
+# 3. 標題與其他內容
+st.title("🎙️ 族語Podcast內容產製程式")
 
-#### 2. 🧪 AI實驗版_RAG
-> 這是最新的測試功能，結合了 Google Gemini AI。
-> 可以讀取 PDF 並自動撰寫劇本。
-
----
-*系統狀態：Multi-Page 架構運作中*
-""")
+# ... (後面接您原本的程式碼) ...
