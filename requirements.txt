@@ -5,4 +5,5 @@ numpy
 gTTS
 pandas
 openpyxl
-requests  # <-- 關鍵：確保 Azure API 運作
+requests
+streamlit-analytics  # <-- 確保新增了這一行
