@@ -7,19 +7,15 @@ import time
 import numpy as np
 import subprocess
 import sys
-import requests  # 引入 requests 模組 (用於 Azure API)
+import requests
 from gtts import gTTS
 import pandas as pd
 import io
 import shutil
-# 移除 nest_asyncio，因為 CLI 模式不需要
-# from gradio_client import Client as GradioClient # 舊的 GradioClient 引用方式
-
-# 為了確保 Gradio Client 可以在此檔案運行，需要引入正確的 Client
 from gradio_client import Client as GradioClient
 
 # ---------------------------------------------------------
-# 1. 資料設定與基礎函式
+# 1. 資料設定與基礎函式 
 # ---------------------------------------------------------
 speaker_map = {
     '阿美': ['阿美_海岸_男聲', '阿美_恆春_女聲', '阿美_馬蘭_女聲', '阿美_南勢_女聲', '阿美_秀姑巒_女聲1', '阿美_秀姑巒_女聲2'],
@@ -64,7 +60,7 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 🔧 新增：Azure TTS API 函式 (取代原本的 generate_chinese_audio_cli)
+# 🔧 核心：Azure TTS API 函式 (官方穩定版)
 # ---------------------------------------------------------
 def generate_audio_azure_api(text, voice_name, api_key, region, output_path):
     if not api_key or not region:
@@ -79,7 +75,6 @@ def generate_audio_azure_api(text, voice_name, api_key, region, output_path):
         "User-Agent": "StreamlitPodcastApp"
     }
     
-    # 這裡直接使用固定的語者名稱，由 generate_chinese_audio_smart 傳入
     ssml = f"""
     <speak version='1.0' xml:lang='zh-TW'>
         <voice xml:lang='zh-TW' name='{voice_name}'>
@@ -562,4 +557,37 @@ with tab4:
         else:
             chunks = split_long_text(clean_text(long_text), 120)
             st.info(f"ℹ️ 切分為 {len(chunks)} 段...")
-            progress = st.progress(0)<br>                status = st.status("🚀 朗讀中...", expanded=True)<br>                clips_l = []<br>                try:<br>                    for idx, chunk in enumerate(chunks):<br>                        status.write(f"朗讀段落 {idx+1}/{len(chunks)}...")<br>                        path = synthesize_indigenous_speech(long_tribe, long_speaker, chunk)<br>                        clip = AudioFileClip(path)<br>                        clips_l.append(clip)<br>                        clips_l.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100))<br>                        progress.progress((idx + 1) / len(chunks))<br>                    if clips_l:<br>                        status.write("🎵 混音中...")<br>                        voice_trk = concatenate_audioclips(clips_l)<br>                        final_out = voice_trk<br>                        if bgm_file_l:<br>                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:<br>                                tmp.write(bgm_file_l.getvalue())<br>                                tmppath = tmp.name<br>                            mtrk = AudioFileClip(tmppath)<br>                            if mtrk.duration < voice_trk.duration:<br>                                mtrk = concatenate_audioclips([mtrk]*int(voice_trk.duration/mtrk.duration+2))<br>                            mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)<br>                            final_out = CompositeAudioClip([mtrk, voice_trk])<br>                            os.remove(tmppath)<br>                        tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")<br>                        final_out.write_audiofile(tmpf.name, logger=None, fps=44100)<br>                        for c in clips_l: c.close()<br>                        final_out.close()<br>                        status.update(label="✅ 完成！", state="complete", expanded=False)<br>                        st.audio(tmpf.name)<br>                        with open(tmpf.name, "rb") as f:<br>                            st.download_button("📥 下載", f, "audiobook.mp3", "audio/mp3", use_container_width=True)<br>                except Exception as e: st.error(f"❌ 錯誤: {e}")
+            progress = st.progress(0)
+            status = st.status("🚀 朗讀中...", expanded=True)
+            clips_l = []
+            try:
+                for idx, chunk in enumerate(chunks):
+                    status.write(f"朗讀段落 {idx+1}/{len(chunks)}...")
+                    path = synthesize_indigenous_speech(long_tribe, long_speaker, chunk)
+                    clip = AudioFileClip(path)
+                    clips_l.append(clip)
+                    clips_l.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100))
+                    progress.progress((idx + 1) / len(chunks))
+                if clips_l:
+                    status.write("🎵 混音中...")
+                    voice_trk = concatenate_audioclips(clips_l)
+                    final_out = voice_trk
+                    if bgm_file_l:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                            tmp.write(bgm_file_l.getvalue())
+                            tmppath = tmp.name
+                        mtrk = AudioFileClip(tmppath)
+                        if mtrk.duration < voice_trk.duration:
+                            mtrk = concatenate_audioclips([mtrk]*int(voice_trk.duration/mtrk.duration+2))
+                        mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
+                        final_out = CompositeAudioClip([mtrk, voice_trk])
+                        os.remove(tmppath)
+                    tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    final_out.write_audiofile(tmpf.name, logger=None, fps=44100)
+                    for c in clips_l: c.close()
+                    final_out.close()
+                    status.update(label="✅ 完成！", state="complete", expanded=False)
+                    st.audio(tmpf.name)
+                    with open(tmpf.name, "rb") as f:
+                        st.download_button("📥 下載", f, "audiobook.mp3", "audio/mp3", use_container_width=True)
+            except Exception as e: st.error(f"❌ 錯誤: {e}")
