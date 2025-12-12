@@ -2,28 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import os
 
-# ---------------------------------------------------------
-# Google Analytics 注入函式 (標準元件版)
-# ---------------------------------------------------------
-def inject_ga():
-    GA_ID = "G-DB6VD72CJT"
-    
-    # 注意：這裡加上了 id="ga-container" 方便我們等一下尋找
-    ga_code = f"""
-    <div id="ga-container">
-        <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
-        <script>
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){{dataLayer.push(arguments);}}
-            gtag('js', new Date());
-            gtag('config', '{GA_ID}');
-            console.log('GA Initialized with ID: {GA_ID}'); // 加這行讓我們在後台看得到
-        </script>
-    </div>
-    """
-    
-    # 插入一個隱形的 HTML 區塊
-    components.html(ga_code, height=0, width=0)
+
 
 # ---------------------------------------------------------
 # 程式主入口
