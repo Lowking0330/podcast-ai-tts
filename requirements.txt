@@ -1,7 +1,7 @@
 gradio-client
 moviepy
 numpy
-edge-tts
+generate_chinese_audio_smart
 gTTS
 pandas
 openpyxl
