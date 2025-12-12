@@ -1,6 +1,3 @@
-[browser]
-# 這是 Google Analytics 的核心配置
-# Streamlit 會自動讀取這個 ID，並在網頁載入時將標準代碼（也就是您提供的這段代碼）植入 <head> 標籤。
-
 [global]
+# Streamlit 會自動讀取這個 ID，並將標準 GA 代碼植入 <head> 標籤
 google_analytics_tracking_id = "G-DB6VD72CJT"
