@@ -7,11 +7,16 @@ import time
 import numpy as np
 import subprocess
 import sys
+import requests  # 引入 requests 模組 (用於 Azure API)
 from gtts import gTTS
 import pandas as pd
 import io
 import shutil
 # 移除 nest_asyncio，因為 CLI 模式不需要
+# from gradio_client import Client as GradioClient # 舊的 GradioClient 引用方式
+
+# 為了確保 Gradio Client 可以在此檔案運行，需要引入正確的 Client
+from gradio_client import Client as GradioClient
 
 # ---------------------------------------------------------
 # 1. 資料設定與基礎函式
@@ -59,63 +64,66 @@ def split_long_text(text, max_chars=150):
     return final_chunks
 
 # ---------------------------------------------------------
-# 🔧 核心：中文語音生成 (CLI 暴力版)
+# 🔧 新增：Azure TTS API 函式 (取代原本的 generate_chinese_audio_cli)
 # ---------------------------------------------------------
-def generate_chinese_audio_cli(text, gender, output_path):
-    """
-    使用 subprocess 直接呼叫 edge-tts 指令。
-    這能避開 Python Asyncio 的 Event Loop 衝突。
-    """
+def generate_audio_azure_api(text, voice_name, api_key, region, output_path):
+    if not api_key or not region:
+        return False, "未設定 Azure Key"
+
+    url = f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
     
-    # 1. 決定語者
-    edge_voice = "zh-TW-HsiaoChenNeural" if gender == "女聲" else "zh-TW-YunJheNeural"
+    headers = {
+        "Ocp-Apim-Subscription-Key": api_key,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+        "User-Agent": "StreamlitPodcastApp"
+    }
     
-    # 2. 準備指令
-    # edge-tts --text "你好" --write-media out.mp3 --voice zh-TW-YunJheNeural
-    command = [
-        "edge-tts",
-        "--text", text,
-        "--write-media", output_path,
-        "--voice", edge_voice
-    ]
+    # 這裡直接使用固定的語者名稱，由 generate_chinese_audio_smart 傳入
+    ssml = f"""
+    <speak version='1.0' xml:lang='zh-TW'>
+        <voice xml:lang='zh-TW' name='{voice_name}'>
+            {text}
+        </voice>
+    </speak>
+    """
     
     try:
-        # 3. 執行指令 (捕捉輸出以便除錯)
-        result = subprocess.run(
-            command, 
-            capture_output=True, 
-            text=True, 
-            timeout=10 # 設定 10 秒超時
-        )
+        response = requests.post(url, headers=headers, data=ssml.encode('utf-8'))
         
-        # 4. 檢查結果
-        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return True, "Edge-TTS (CLI)"
+        if response.status_code == 200:
+            with open(output_path, 'wb') as f:
+                f.write(response.content)
+            return True, "Azure API"
         else:
-            # 失敗時，回傳錯誤訊息
-            error_msg = result.stderr if result.stderr else "Unknown CLI Error"
-            print(f"CLI Error: {error_msg}")
+            error_msg = f"Azure Error: {response.status_code} - {response.text}"
+            print(error_msg)
             return False, error_msg
-
+            
     except Exception as e:
-        print(f"Subprocess Failed: {e}")
+        print(f"Connection Error: {e}")
         return False, str(e)
 
-def generate_chinese_audio_smart(text, gender, output_path):
-    # --- 1. 嘗試 Edge-TTS (CLI) ---
-    success, msg = generate_chinese_audio_cli(text, gender, output_path)
-    
-    if success:
-        return True, "Edge-TTS"
-    
-    # 如果 Edge-TTS 失敗，在後台印出原因 (可能是 403 Forbidden)
-    print(f"Edge-TTS CLI Failed: {msg}")
-    
-    # 如果錯誤包含 403，代表 Streamlit IP 被微軟封鎖了，這時真的無解，只能用 gTTS
-    if "403" in str(msg):
-        st.toast("⚠️ 雲端 IP 被微軟暫時封鎖，轉為 gTTS", icon="🔒")
 
-    # --- 2. 備援 gTTS ---
+def generate_chinese_audio_smart(text, gender, output_path, azure_key, azure_region):
+    # 1. 決定語者 (Azure 官方代號)
+    if gender == "男聲":
+        voice_name = "zh-TW-YunJheNeural"
+    else:
+        voice_name = "zh-TW-HsiaoChenNeural"
+        
+    # 2. 嘗試 Azure API
+    if azure_key and azure_region:
+        success, msg = generate_audio_azure_api(text, voice_name, azure_key, azure_region, output_path)
+        if success:
+            return True, "Azure"
+        else:
+            print(f"Azure Failed (Turning to gTTS): {msg}")
+            # 如果是 401 (Key 錯誤)，在網站上顯示提示
+            if "401" in msg or "403" in msg:
+                 st.toast("⚠️ Azure 認證失敗或無效，轉為 gTTS", icon="🔒")
+            
+    # 3. 備援 gTTS
     try:
         tts = gTTS(text=text, lang='zh-tw')
         tts.save(output_path)
@@ -125,30 +133,27 @@ def generate_chinese_audio_smart(text, gender, output_path):
         return False, f"All Failed: {e}"
 
 # 原住民語音 (維持 Gradio Client)
-# 注意：為了避免 import 錯誤，這裡需要重新 import Client
-from gradio_client import Client as GradioClient
-
 def synthesize_indigenous_speech(tribe, speaker, text):
     # 這裡加入重試機制
     max_retries = 2
     for attempt in range(max_retries):
         try:
+            # 確保使用正確的 GradioClient 引用
             client = GradioClient("https://hnang-kari-ai-asi-sluhay.ithuan.tw/")
             
-            # 嘗試繞過檢查
+            # 嘗試繞過檢查 (保持原本的邏輯)
             try:
                 target_endpoints = [client.endpoints.get('/default_speaker_tts'), client.endpoints.get('/custom_speaker_tts')]
                 for endpoint in target_endpoints:
                     if endpoint and hasattr(endpoint, 'parameters'):
                         for param in endpoint.parameters:
-                            if 'enum' in param and speaker_id not in param['enum']:
-                                param['enum'].append(speaker_id)
-                            if 'choices' in param and speaker_id not in param['choices']:
-                                param['choices'].append(speaker_id)
+                            if 'enum' in param and speaker not in param['enum']:
+                                param['enum'].append(speaker)
+                            if 'choices' in param and speaker not in param['choices']:
+                                param['choices'].append(speaker)
             except: pass
 
             client.predict(ethnicity=tribe, api_name="/lambda")
-            # 稍微等待一下
             time.sleep(1.0)
             path = client.predict(ref=speaker, gen_text_input=text, api_name="/default_speaker_tts")
             return path
@@ -159,7 +164,7 @@ def synthesize_indigenous_speech(tribe, speaker, text):
             time.sleep(2)
 
 # ---------------------------------------------------------
-# Excel/Txt 處理
+# Excel/Txt 處理 (保持原有的函式)
 # ---------------------------------------------------------
 def convert_df_to_excel(dialogue_list):
     df = pd.DataFrame(dialogue_list)
@@ -213,13 +218,32 @@ def parse_uploaded_file(uploaded_file):
         return None
 
 # ---------------------------------------------------------
-# 2. 介面初始化
+# 2. 介面初始化 (新增 Azure Key UI)
 # ---------------------------------------------------------
 st.set_page_config(page_title="Podcast-021 Pro", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.title("🎙️ 原語 Podcast")
     st.markdown("### 🇹🇼 臺灣原住民族語生成器")
+    
+    st.markdown("---")
+    # >>> 這裡插入 Azure Key 輸入 UI <<<
+    st.markdown("#### 🔑 Azure 設定 (選填)")
+    st.info("請輸入 Key 和 Region，以啟用高品質 Azure 男聲。")
+    
+    if 'azure_key' not in st.session_state: st.session_state['azure_key'] = ''
+    if 'azure_region' not in st.session_state: st.session_state['azure_region'] = ''
+    
+    user_az_key = st.text_input("Azure Speech Key", value=st.session_state['azure_key'], type="password", placeholder="從 Azure Portal 複製 Key 1")
+    user_az_reg = st.text_input("Region (區域)", value=st.session_state['azure_region'], placeholder="例如 eastasia 或 eastus")
+    
+    if user_az_key and user_az_reg:
+        st.session_state['azure_key'] = user_az_key
+        st.session_state['azure_region'] = user_az_reg
+        st.success("✅ Azure API 已啟用")
+    else:
+        st.caption("未設定 Azure Key，將使用 Google 備援。")
+    # <<< 結束 Azure Key 輸入 UI >>>
     
     st.markdown("---")
     st.markdown("### 🌟 功能簡介")
@@ -231,7 +255,7 @@ with st.sidebar:
     """)
     st.markdown("---")
     st.success("✅ 系統狀態：正常")
-    st.caption("版本: Podcast-021 | 核心: EdgeCLI")
+    st.caption("版本: Podcast-Azure | 核心: REST API")
 
 st.title("🎙️ 族語Podcast內容產製程式")
 st.markdown("打造您的專屬原住民族語廣播節目，支援 **16族42語**、**雙語教學** 與 **背景混音**。")
@@ -240,7 +264,7 @@ if 'dialogue_list' not in st.session_state:
     st.session_state['dialogue_list'] = []
 
 # ---------------------------------------------------------
-# 3. 分頁定義
+# 3. 分頁定義 (保持原有的 tab4)
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "💬 單句合成", 
@@ -250,7 +274,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # ==========================================
-# 分頁 1: 單句合成
+# 分頁 1: 單句合成 (保持原有邏輯)
 # ==========================================
 with tab1:
     st.markdown("### 💬 單句語音測試")
@@ -284,7 +308,7 @@ with tab1:
                 except Exception as e: st.error(f"錯誤: {e}")
 
 # ==========================================
-# 共用函式：Podcast 列表編輯器
+# 共用函式：Podcast 列表編輯器 (保持原有邏輯)
 # ==========================================
 def render_script_editor(key_prefix):
     if st.button("✨ 載入範例劇本 (秀姑巒阿美)", key=f"{key_prefix}_ex", use_container_width=True):
@@ -377,7 +401,7 @@ def render_script_editor(key_prefix):
         st.rerun()
 
 # ==========================================
-# 分頁 2: Podcast I (全族語)
+# 分頁 2: Podcast I (全族語) (保持原有邏輯)
 # ==========================================
 with tab2:
     st.markdown("### 🎧 Podcast I (全族語模式)")
@@ -427,7 +451,7 @@ with tab2:
             except Exception as e: st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 3: Podcast II (雙語教學) - 關鍵修正
+# 分頁 3: Podcast II (雙語教學) (修改核心邏輯)
 # ==========================================
 with tab3:
     st.markdown("### 🏫 Podcast II (雙語教學模式)")
@@ -449,6 +473,11 @@ with tab3:
                 progress = st.progress(0)
                 status = st.status("🚀 製作中...", expanded=True)
                 clips = []
+                
+                # 取得側邊欄輸入的 Azure 設定
+                az_key = st.session_state.get('azure_key', '')
+                az_reg = st.session_state.get('azure_region', '')
+                
                 for idx, item in enumerate(dialogue):
                     txt = clean_text(item['text'])
                     zh = clean_text(item.get('zh', ''))
@@ -464,17 +493,17 @@ with tab3:
                         clips.append(AudioArrayClip(np.zeros((int(44100 * gap_time), clip_ind.nchannels)), fps=44100))
                         
                         tmp_zh_path = tempfile.mktemp(suffix=".mp3")
-                        # 呼叫 CLI 版合成器
-                        success, eng = generate_chinese_audio_smart(zh, zh_gender, tmp_zh_path)
+                        # 呼叫新的 Azure API 智慧函式
+                        success, eng = generate_chinese_audio_smart(zh, zh_gender, tmp_zh_path, az_key, az_reg)
                         
                         if success and os.path.exists(tmp_zh_path):
                             clips.append(AudioFileClip(tmp_zh_path))
-                            if eng == "Edge-TTS":
-                                st.toast(f"✅ #{idx+1} 男聲合成成功", icon="🎉")
+                            if eng == "Azure":
+                                st.toast(f"✅ #{idx+1} Azure 男聲成功", icon="🎉")
                             elif eng == "gTTS-Fallback":
-                                st.toast(f"⚠️ #{idx+1} 降級為女聲", icon="ℹ️")
+                                st.toast(f"⚠️ #{idx+1} 降級為 gTTS 女聲", icon="ℹ️")
                         else:
-                            st.error(f"#{idx+1} 失敗")
+                            st.error(f"#{idx+1} 中文合成失敗")
                             
                     clips.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip_ind.nchannels)), fps=44100))
                     progress.progress((idx+1)/len(dialogue))
@@ -504,7 +533,7 @@ with tab3:
             except Exception as e: st.error(f"錯誤: {e}")
 
 # ==========================================
-# 分頁 4: 長文有聲書
+# 分頁 4: 長文有聲書 (保持原有邏輯)
 # ==========================================
 with tab4:
     st.markdown("### 📖 長文有聲書製作")
@@ -533,37 +562,4 @@ with tab4:
         else:
             chunks = split_long_text(clean_text(long_text), 120)
             st.info(f"ℹ️ 切分為 {len(chunks)} 段...")
-            progress = st.progress(0)
-            status = st.status("🚀 朗讀中...", expanded=True)
-            clips_l = []
-            try:
-                for idx, chunk in enumerate(chunks):
-                    status.write(f"朗讀段落 {idx+1}/{len(chunks)}...")
-                    path = synthesize_indigenous_speech(long_tribe, long_speaker, chunk)
-                    clip = AudioFileClip(path)
-                    clips_l.append(clip)
-                    clips_l.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100))
-                    progress.progress((idx + 1) / len(chunks))
-                if clips_l:
-                    status.write("🎵 混音中...")
-                    voice_trk = concatenate_audioclips(clips_l)
-                    final_out = voice_trk
-                    if bgm_file_l:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                            tmp.write(bgm_file_l.getvalue())
-                            tmppath = tmp.name
-                        mtrk = AudioFileClip(tmppath)
-                        if mtrk.duration < voice_trk.duration:
-                            mtrk = concatenate_audioclips([mtrk]*int(voice_trk.duration/mtrk.duration+2))
-                        mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)
-                        final_out = CompositeAudioClip([mtrk, voice_trk])
-                        os.remove(tmppath)
-                    tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                    final_out.write_audiofile(tmpf.name, logger=None, fps=44100)
-                    for c in clips_l: c.close()
-                    final_out.close()
-                    status.update(label="✅ 完成！", state="complete", expanded=False)
-                    st.audio(tmpf.name)
-                    with open(tmpf.name, "rb") as f:
-                        st.download_button("📥 下載", f, "audiobook.mp3", "audio/mp3", use_container_width=True)
-            except Exception as e: st.error(f"❌ 錯誤: {e}")
+            progress = st.progress(0)<br>                status = st.status("🚀 朗讀中...", expanded=True)<br>                clips_l = []<br>                try:<br>                    for idx, chunk in enumerate(chunks):<br>                        status.write(f"朗讀段落 {idx+1}/{len(chunks)}...")<br>                        path = synthesize_indigenous_speech(long_tribe, long_speaker, chunk)<br>                        clip = AudioFileClip(path)<br>                        clips_l.append(clip)<br>                        clips_l.append(AudioArrayClip(np.zeros((int(44100 * 1.0), clip.nchannels)), fps=44100))<br>                        progress.progress((idx + 1) / len(chunks))<br>                    if clips_l:<br>                        status.write("🎵 混音中...")<br>                        voice_trk = concatenate_audioclips(clips_l)<br>                        final_out = voice_trk<br>                        if bgm_file_l:<br>                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:<br>                                tmp.write(bgm_file_l.getvalue())<br>                                tmppath = tmp.name<br>                            mtrk = AudioFileClip(tmppath)<br>                            if mtrk.duration < voice_trk.duration:<br>                                mtrk = concatenate_audioclips([mtrk]*int(voice_trk.duration/mtrk.duration+2))<br>                            mtrk = mtrk.subclipped(0, voice_trk.duration + 1).with_volume_scaled(bgm_vol_l)<br>                            final_out = CompositeAudioClip([mtrk, voice_trk])<br>                            os.remove(tmppath)<br>                        tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")<br>                        final_out.write_audiofile(tmpf.name, logger=None, fps=44100)<br>                        for c in clips_l: c.close()<br>                        final_out.close()<br>                        status.update(label="✅ 完成！", state="complete", expanded=False)<br>                        st.audio(tmpf.name)<br>                        with open(tmpf.name, "rb") as f:<br>                            st.download_button("📥 下載", f, "audiobook.mp3", "audio/mp3", use_container_width=True)<br>                except Exception as e: st.error(f"❌ 錯誤: {e}")
