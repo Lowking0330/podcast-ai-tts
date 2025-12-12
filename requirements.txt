@@ -1,11 +1,8 @@
+streamlit
 gradio-client
 moviepy
 numpy
-generate_chinese_audio_smart
 gTTS
 pandas
 openpyxl
-nest_asyncio
-google-generativeai>=0.8.3
-PyPDF2
-requests
+requests  # <-- 關鍵：確保 Azure API 運作
