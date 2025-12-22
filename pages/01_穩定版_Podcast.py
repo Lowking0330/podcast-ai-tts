@@ -275,7 +275,7 @@ with tab1:
     st.markdown("### 💬 單句語音測試")
     c_btn1, c_btn2 = st.columns(2)
     with c_btn1:
-        if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single"):
+        if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single_Amis", use_container_width=True):
             st.session_state['s1_tribe_idx'] = 0 
             st.session_state['s1_speaker_idx'] = 4 
             st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
@@ -326,8 +326,8 @@ def render_script_editor(key_prefix):
     with c_btn_b:
         if st.button("✨ 載入範例 (排灣)", key=f"{key_prefix}_ex_paiwan", use_container_width=True):
             st.session_state['dialogue_list'] = [
-                {"tribe": "排灣", "speaker": "排灣_南_女聲", "text": "Djavadjavai.", "zh": "你好。"},
-                {"tribe": "排灣", "speaker": "排灣_中_男聲", "text": "cuacuay ini tje ucevucevung.", "zh": "好久不見。"}
+                {"tribe": "排灣", "speaker": "排灣_北_女聲", "text": "Djavadjavai.", "zh": "你好。"},
+                {"tribe": "排灣", "speaker": "排灣_北_女聲", "text": "cuacuay ini tje ucevucevung.", "zh": "好久不見。"}
             ]
             st.rerun()
 
