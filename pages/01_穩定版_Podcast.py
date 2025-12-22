@@ -284,7 +284,7 @@ with tab1:
         if st.button("✨ 載入範例 (南排灣)", key="ex_single_paiwan", use_container_width=True):
             st.session_state['s1_tribe_idx'] = 2  # 排灣 (在 speaker_map 的第3個)
             st.session_state['s1_speaker_idx'] = 3  # 排灣_南_女聲 (在列表的第4個)
-            st.session_state['s1_text_val'] = "Djavadjavai! Ti Kui aken." # 你好！我是Kui。
+            st.session_state['s1_text_val'] = "Djavadjavai! Ti Muni aken." # 你好！我是Muni。
             st.rerun()
             
     def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
@@ -326,8 +326,8 @@ def render_script_editor(key_prefix):
     with c_btn_b:
         if st.button("✨ 載入範例 (排灣)", key=f"{key_prefix}_ex_paiwan", use_container_width=True):
             st.session_state['dialogue_list'] = [
-                {"tribe": "排灣", "speaker": "排灣_南_女聲", "text": "Djavadjavai.", "zh": "大家好。"},
-                {"tribe": "排灣", "speaker": "排灣_中_男聲", "text": "Izua a su kakanan?", "zh": "你吃飯了嗎？"}
+                {"tribe": "排灣", "speaker": "排灣_南_女聲", "text": "Djavadjavai.", "zh": "你好。"},
+                {"tribe": "排灣", "speaker": "排灣_中_男聲", "text": "cuacuay ini tje ucevucevung.", "zh": "好久不見。"}
             ]
             st.rerun()
 
