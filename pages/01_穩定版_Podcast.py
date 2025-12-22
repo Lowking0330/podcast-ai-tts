@@ -282,9 +282,13 @@ with tab1:
             st.rerun()
     with c_btn2:
         if st.button("✨ 載入範例 (南排灣)", key="ex_single_paiwan", use_container_width=True):
-            st.session_state['s1_tribe_idx'] = 2  # 排灣 (在 speaker_map 的第3個)
-            st.session_state['s1_speaker_idx'] = 3  # 排灣_南_女聲 (在列表的第4個)
-            st.session_state['s1_text_val'] = "Djavadjavai! Ti Muni aken." # 你好！我是Muni。
+            # ★ 新增這行：直接告訴系統 s1_tribe 這個元件現在要顯示 "排灣"
+            st.session_state['s1_tribe'] = '排灣' 
+            st.session_state['s1_tribe_idx'] = 2
+    
+            # ★ 新增這行：直接告訴系統 s1_speaker 這個元件現在要顯示 "排灣_南_女聲"
+            st.session_state['s1_speaker'] = '排灣_南_女聲'
+            st.session_state['s1_speaker_idx'] = 3
             st.rerun()
             
     def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
@@ -557,7 +561,7 @@ with tab4:
         if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_long_amis", use_container_width=True):
             st.session_state['l_tribe_idx'] = 0 
             st.session_state['l_speaker_idx'] = 4
-            st.session_state['l_text_val'] = "O kakalayan no 'Amis a tamdaw.\nItini i Taywan, adihay ko kasasiromaroma no yincumin." 
+            st.session_state['l_text_val'] = "Caay ka ngarod ko Pangcah to sinafel. \Ano i riyaray to, i hadhaday to, i lotokay to, ano maeferay to, makaen a maemin no Pangcah." 
             st.rerun()
     with c_l_btn2:
         if st.button("✨ 載入範例 (南排灣)", key="ex_long_paiwan", use_container_width=True):
