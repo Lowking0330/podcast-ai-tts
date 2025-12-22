@@ -269,38 +269,48 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # ==========================================
-# 分頁 1: 單句合成 (保持原有邏輯)
+# 分頁 1: 單句合成 (修正 Key/Index 衝突版)
 # ==========================================
 with tab1:
     st.markdown("### 💬 單句語音測試")
     c_btn1, c_btn2 = st.columns(2)
     with c_btn1:
-        if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single_Amis", use_container_width=True):
-            st.session_state['s1_tribe_idx'] = 0 
-            st.session_state['s1_speaker_idx'] = 4 
+        if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single", use_container_width=True):
+            st.session_state['s1_tribe'] = '阿美'  # 直接設定 Key 的值
+            st.session_state['s1_speaker'] = '阿美_秀姑巒_女聲1'
             st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
             st.rerun()
     with c_btn2:
         if st.button("✨ 載入範例 (南排灣)", key="ex_single_paiwan", use_container_width=True):
-            # ★ 新增這行：直接告訴系統 s1_tribe 這個元件現在要顯示 "排灣"
-            st.session_state['s1_tribe'] = '排灣' 
-            st.session_state['s1_tribe_idx'] = 2
-    
-            # ★ 新增這行：直接告訴系統 s1_speaker 這個元件現在要顯示 "排灣_南_女聲"
+            st.session_state['s1_tribe'] = '排灣'  # 直接設定 Key 的值
             st.session_state['s1_speaker'] = '排灣_南_女聲'
-            st.session_state['s1_speaker_idx'] = 3
+            st.session_state['s1_text_val'] = "Djavadjavai! Ti Kui aken." 
             st.rerun()
             
-    def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
+    # --- 修正邏輯開始：不再使用 index，改為初始化 Session State ---
+    
+    # 1. 確保 s1_tribe 有預設值
+    if 's1_tribe' not in st.session_state:
+        st.session_state['s1_tribe'] = '阿美'
+
     with st.container(border=True):
         c1, c2 = st.columns(2)
-        with c1: s_tribe = st.selectbox("選擇族群", list(speaker_map.keys()), key="s1_tribe", index=def_tribe_idx)
+        with c1: 
+            # ★ 關鍵修正：移除了 index=def_tribe_idx，完全交給 key 控制
+            s_tribe = st.selectbox("選擇族群", list(speaker_map.keys()), key="s1_tribe")
+        
         with c2:
             avail_spks = speaker_map[s_tribe]
-            def_spk_idx = 4 if s_tribe == '阿美' else 0
-            if 's1_speaker_idx' in st.session_state: def_spk_idx = st.session_state['s1_speaker_idx']
-            if def_spk_idx >= len(avail_spks): def_spk_idx = 0
-            s_speaker = st.selectbox("選擇語者", avail_spks, key="s1_speaker", index=def_spk_idx)
+            
+            # 2. 確保 s1_speaker 有預設值，且必須在目前的族群清單中
+            if 's1_speaker' not in st.session_state:
+                st.session_state['s1_speaker'] = avail_spks[0]
+            elif st.session_state['s1_speaker'] not in avail_spks:
+                # 如果切換了族群，原本的語者可能不在新清單裡，強制重設為第一個
+                st.session_state['s1_speaker'] = avail_spks[0]
+
+            # ★ 關鍵修正：移除了 index=...，完全交給 key 控制
+            s_speaker = st.selectbox("選擇語者", avail_spks, key="s1_speaker")
         
         def_text = st.session_state.get('s1_text_val', "")
         s_text = st.text_area("輸入族語文字", value=def_text, height=120)
