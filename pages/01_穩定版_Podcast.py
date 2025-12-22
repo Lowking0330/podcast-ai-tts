@@ -574,8 +574,8 @@ with tab4:
             st.session_state['l_text_val'] = "Caay ka ngarod ko Pangcah to sinafel. \Ano i riyaray to, i hadhaday to, i lotokay to, ano maeferay to, makaen a maemin no Pangcah." 
             st.rerun()
     with c_l_btn2:
-        if st.button("✨ 載入範例 (南排灣)", key="ex_long_paiwan", use_container_width=True):
-            st.session_state['s1_tribe'] = '排灣'
+        if st.button("✨ 載入範例 (南排灣)", key="ex_single_paiwan", use_container_width=True):
+            st.session_state['s1_tribe'] = '排灣'  # 直接設定 Key 的值'
             st.session_state['l_speaker_idx'] = 3 # 排灣_南_女聲
             # 這是排灣語範例：簡單介紹
             paiwan_text = "a qata pitua se paiwan, sinan pazangal a sauzayan uta, sinan paravac uta, pinasasevalivalitan tua kinacemekeljan. \namasan lisi tua puvaljavaljaw, namayatua kadjunangan a pazangalan nua kakaveliyan."
