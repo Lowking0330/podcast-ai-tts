@@ -273,12 +273,14 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ==========================================
 with tab1:
     st.markdown("### 💬 單句語音測試")
-    if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single"):
-        st.session_state['s1_tribe_idx'] = 0 
-        st.session_state['s1_speaker_idx'] = 4 
-        st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
-        st.rerun()
-with c_btn2:
+    c_btn1, c_btn2 = st.columns(2)
+    with c_btn1:
+        if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_single"):
+            st.session_state['s1_tribe_idx'] = 0 
+            st.session_state['s1_speaker_idx'] = 4 
+            st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
+            st.rerun()
+    with c_btn2:
         if st.button("✨ 載入範例 (南排灣)", key="ex_single_paiwan", use_container_width=True):
             st.session_state['s1_tribe_idx'] = 2  # 排灣 (在 speaker_map 的第3個)
             st.session_state['s1_speaker_idx'] = 3  # 排灣_南_女聲 (在列表的第4個)
@@ -547,7 +549,7 @@ with tab3:
 # 分頁 4: 長文有聲書 (保持原有邏輯)
 # ==========================================
 with tab4:
-st.markdown("### 📖 長文有聲書製作")
+    st.markdown("### 📖 長文有聲書製作")
     
     # --- 修改開始: 改為並排按鈕 ---
     c_l_btn1, c_l_btn2 = st.columns(2)
@@ -566,6 +568,7 @@ st.markdown("### 📖 長文有聲書製作")
             st.session_state['l_text_val'] = paiwan_text
             st.rerun()
     # --- 修改結束 ---
+
     def_l_idx = st.session_state.get('l_tribe_idx', 0)
     with st.container(border=True):
         c_l1, c_l2 = st.columns(2)
@@ -576,11 +579,13 @@ st.markdown("### 📖 長文有聲書製作")
             if 'l_speaker_idx' not in st.session_state and long_tribe=='阿美': def_l_s_idx = 4
             if def_l_s_idx >= len(avail): def_l_s_idx = 0
             long_speaker = st.selectbox("朗讀語者", avail, key="l_sp", index=def_l_s_idx)
+        
         def_l_text = st.session_state.get('l_text_val', "")
         long_text = st.text_area("貼上文章 (自動切分)", value=def_l_text, height=200)
         c_b3, c_b4 = st.columns([3, 1])
         with c_b3: bgm_file_l = st.file_uploader("BGM", type=["mp3", "wav"], key="bgm_l")
         with c_b4: bgm_vol_l = st.slider("音量", 0.05, 0.5, 0.15, 0.05, key="vol_l")
+    
     if st.button("📖 開始製作", type="primary", use_container_width=True):
         if not long_text.strip(): st.warning("⚠️ 請先輸入文字")
         else:
