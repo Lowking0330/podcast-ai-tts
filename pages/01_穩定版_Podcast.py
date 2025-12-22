@@ -575,7 +575,7 @@ with tab4:
             st.rerun()
     with c_l_btn2:
         if st.button("✨ 載入範例 (南排灣)", key="ex_long_paiwan", use_container_width=True):
-            st.session_state['l_tribe_idx'] = 2 # 排灣
+            st.session_state['s1_tribe'] = '排灣'  # 直接設定 Key 的值
             st.session_state['l_speaker_idx'] = 3 # 排灣_南_女聲
             # 這是排灣語範例：簡單介紹
             paiwan_text = "a qata pitua se paiwan, sinan pazangal a sauzayan uta, sinan paravac uta, pinasasevalivalitan tua kinacemekeljan. \namasan lisi tua puvaljavaljaw, namayatua kadjunangan a pazangalan nua kakaveliyan."
