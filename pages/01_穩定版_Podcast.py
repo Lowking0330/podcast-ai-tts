@@ -278,7 +278,13 @@ with tab1:
         st.session_state['s1_speaker_idx'] = 4 
         st.session_state['s1_text_val'] = "Nga'ay ho! Ci Panay kako." 
         st.rerun()
-
+with c_btn2:
+        if st.button("✨ 載入範例 (南排灣)", key="ex_single_paiwan", use_container_width=True):
+            st.session_state['s1_tribe_idx'] = 2  # 排灣 (在 speaker_map 的第3個)
+            st.session_state['s1_speaker_idx'] = 3  # 排灣_南_女聲 (在列表的第4個)
+            st.session_state['s1_text_val'] = "Djavadjavai! Ti Kui aken." # 你好！我是Kui。
+            st.rerun()
+            
     def_tribe_idx = st.session_state.get('s1_tribe_idx', 0)
     with st.container(border=True):
         c1, c2 = st.columns(2)
@@ -306,12 +312,22 @@ with tab1:
 # 共用函式：Podcast 列表編輯器 (保持原有邏輯)
 # ==========================================
 def render_script_editor(key_prefix):
-    if st.button("✨ 載入範例劇本 (秀姑巒阿美)", key=f"{key_prefix}_ex", use_container_width=True):
-        st.session_state['dialogue_list'] = [
-            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
-            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"}
-        ]
-        st.rerun()
+    # --- 修改開始: 改為並排按鈕 ---
+    c_btn_a, c_btn_b = st.columns(2)
+    with c_btn_a:
+        if st.button("✨ 載入範例 (阿美)", key=f"{key_prefix}_ex_amis", use_container_width=True):
+            st.session_state['dialogue_list'] = [
+                {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
+                {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"}
+            ]
+            st.rerun()
+    with c_btn_b:
+        if st.button("✨ 載入範例 (排灣)", key=f"{key_prefix}_ex_paiwan", use_container_width=True):
+            st.session_state['dialogue_list'] = [
+                {"tribe": "排灣", "speaker": "排灣_南_女聲", "text": "Djavadjavai.", "zh": "大家好。"},
+                {"tribe": "排灣", "speaker": "排灣_中_男聲", "text": "Izua a su kakanan?", "zh": "你吃飯了嗎？"}
+            ]
+            st.rerun()
 
     with st.expander("📂 專案存檔/讀取", expanded=False):
         c_save, c_load = st.columns(2)
@@ -531,12 +547,25 @@ with tab3:
 # 分頁 4: 長文有聲書 (保持原有邏輯)
 # ==========================================
 with tab4:
-    st.markdown("### 📖 長文有聲書製作")
-    if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_long", use_container_width=True):
-        st.session_state['l_tribe_idx'] = 0 
-        st.session_state['l_speaker_idx'] = 4
-        st.session_state['l_text_val'] = "O kakalayan no 'Amis a tamdaw.\nItini i Taywan, adihay ko kasasiromaroma no yincumin." 
-        st.rerun()
+st.markdown("### 📖 長文有聲書製作")
+    
+    # --- 修改開始: 改為並排按鈕 ---
+    c_l_btn1, c_l_btn2 = st.columns(2)
+    with c_l_btn1:
+        if st.button("✨ 載入範例 (秀姑巒阿美)", key="ex_long_amis", use_container_width=True):
+            st.session_state['l_tribe_idx'] = 0 
+            st.session_state['l_speaker_idx'] = 4
+            st.session_state['l_text_val'] = "O kakalayan no 'Amis a tamdaw.\nItini i Taywan, adihay ko kasasiromaroma no yincumin." 
+            st.rerun()
+    with c_l_btn2:
+        if st.button("✨ 載入範例 (南排灣)", key="ex_long_paiwan", use_container_width=True):
+            st.session_state['l_tribe_idx'] = 2 # 排灣
+            st.session_state['l_speaker_idx'] = 3 # 排灣_南_女聲
+            # 這是排灣語範例：簡單介紹
+            paiwan_text = "a qata pitua se paiwan, sinan pazangal a sauzayan uta, sinan paravac uta, pinasasevalivalitan tua kinacemekeljan. \namasan lisi tua puvaljavaljaw, namayatua kadjunangan a pazangalan nua kakaveliyan."
+            st.session_state['l_text_val'] = paiwan_text
+            st.rerun()
+    # --- 修改結束 ---
     def_l_idx = st.session_state.get('l_tribe_idx', 0)
     with st.container(border=True):
         c_l1, c_l2 = st.columns(2)
