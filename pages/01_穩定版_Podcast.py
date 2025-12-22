@@ -327,24 +327,49 @@ with tab1:
 # ==========================================
 # 共用函式：Podcast 列表編輯器 (保持原有邏輯)
 # ==========================================
+# ==========================================
+# 共用函式：Podcast 列表編輯器 (Callback 修正版)
+# ==========================================
 def render_script_editor(key_prefix):
-    # --- 修改開始: 改為並排按鈕 ---
+    
+    # --- 定義 Callback：載入阿美語範例 ---
+    def load_amis_script():
+        new_data = [
+            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
+            {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"}
+        ]
+        st.session_state['dialogue_list'] = new_data
+        
+        # ★ 關鍵：強制更新介面上的每一個元件的 Key 值
+        for i, item in enumerate(new_data):
+            st.session_state[f"{key_prefix}_tr_{i}"] = item['tribe']
+            st.session_state[f"{key_prefix}_sp_{i}"] = item['speaker']
+            st.session_state[f"{key_prefix}_tx_{i}"] = item['text']
+            st.session_state[f"{key_prefix}_zh_{i}"] = item['zh']
+
+    # --- 定義 Callback：載入排灣語範例 ---
+    def load_paiwan_script():
+        new_data = [
+            {"tribe": "排灣", "speaker": "排灣_南_女聲", "text": "Djavadjavai.", "zh": "你好。"},
+            {"tribe": "排灣", "speaker": "排灣_南_女聲", "text": "cuacuay ini tje ucevucevung.", "zh": "好久不見。"}
+        ]
+        st.session_state['dialogue_list'] = new_data
+        
+        # ★ 關鍵：強制更新介面上的每一個元件的 Key 值
+        for i, item in enumerate(new_data):
+            st.session_state[f"{key_prefix}_tr_{i}"] = item['tribe']
+            st.session_state[f"{key_prefix}_sp_{i}"] = item['speaker']
+            st.session_state[f"{key_prefix}_tx_{i}"] = item['text']
+            st.session_state[f"{key_prefix}_zh_{i}"] = item['zh']
+
+    # --- 按鈕區 (改用 on_click) ---
     c_btn_a, c_btn_b = st.columns(2)
     with c_btn_a:
-        if st.button("✨ 載入範例 (阿美)", key=f"{key_prefix}_ex_amis", use_container_width=True):
-            st.session_state['dialogue_list'] = [
-                {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Nga'ay ho.", "zh": "你好。"},
-                {"tribe": "阿美", "speaker": "阿美_秀姑巒_女聲1", "text": "Maolah misa'osi kiso?", "zh": "你喜歡讀書嗎？"}
-            ]
-            st.rerun()
+        st.button("✨ 載入範例 (阿美)", key=f"{key_prefix}_ex_amis", use_container_width=True, on_click=load_amis_script)
     with c_btn_b:
-        if st.button("✨ 載入範例 (排灣)", key=f"{key_prefix}_ex_paiwan", use_container_width=True):
-            st.session_state['dialogue_list'] = [
-                {"tribe": "排灣", "speaker": "排灣_北_女聲", "text": "Djavadjavai.", "zh": "你好。"},
-                {"tribe": "排灣", "speaker": "排灣_北_女聲", "text": "cuacuay ini tje ucevucevung.", "zh": "好久不見。"}
-            ]
-            st.rerun()
+        st.button("✨ 載入範例 (排灣)", key=f"{key_prefix}_ex_paiwan", use_container_width=True, on_click=load_paiwan_script)
 
+    # --- 檔案存取區 (保持不變) ---
     with st.expander("📂 專案存檔/讀取", expanded=False):
         c_save, c_load = st.columns(2)
         with c_save:
@@ -362,6 +387,7 @@ def render_script_editor(key_prefix):
                     time.sleep(1)
                     st.rerun()
 
+    # --- 快速貼上區 (保持不變) ---
     with st.expander("⚡ 快速劇本貼上", expanded=False):
         c_r1, c_r2 = st.columns(2)
         with c_r1:
@@ -398,24 +424,51 @@ def render_script_editor(key_prefix):
     if not st.session_state['dialogue_list']:
         st.info("👋 列表是空的。")
 
+    # --- 列表渲染區 (邏輯優化) ---
     for i, line in enumerate(st.session_state['dialogue_list']):
         with st.container(border=True):
             col_idx, col_set, col_text, col_zh, col_del = st.columns([0.3, 2.7, 3.5, 3, 0.5])
             col_idx.write(f"**#{i+1}**")
-            with col_set:
-                try: idx_tr = list(speaker_map.keys()).index(line['tribe'])
-                except: idx_tr = 0
-                nt = st.selectbox("族", list(speaker_map.keys()), key=f"{key_prefix}_tr_{i}", index=idx_tr, label_visibility="collapsed")
-                avail = speaker_map[nt]
-                try: idx_sp = avail.index(line['speaker'])
-                except: idx_sp = 0
-                ns = st.selectbox("語", avail, key=f"{key_prefix}_sp_{i}", index=idx_sp, label_visibility="collapsed")
             
-            ntx = col_text.text_input("族語", value=line['text'], key=f"{key_prefix}_tx_{i}", label_visibility="collapsed")
-            nzh = col_zh.text_input("中文", value=line.get('zh',''), key=f"{key_prefix}_zh_{i}", label_visibility="collapsed")
+            with col_set:
+                # 1. 處理族群 Selectbox
+                tr_key = f"{key_prefix}_tr_{i}"
+                # 如果 Session State 裡還沒這個 Key (或是新的一行)，就先初始化它
+                if tr_key not in st.session_state:
+                    st.session_state[tr_key] = line['tribe']
+                
+                # 移除 index，完全交給 key 控制
+                nt = st.selectbox("族", list(speaker_map.keys()), key=tr_key, label_visibility="collapsed")
+                
+                # 2. 處理語者 Selectbox
+                avail = speaker_map[nt]
+                sp_key = f"{key_prefix}_sp_{i}"
+                
+                if sp_key not in st.session_state:
+                    st.session_state[sp_key] = line['speaker']
+                
+                # 防呆：如果切換族群後，語者不在清單內，強制設為第一個
+                if st.session_state[sp_key] not in avail:
+                    st.session_state[sp_key] = avail[0]
+                
+                ns = st.selectbox("語", avail, key=sp_key, label_visibility="collapsed")
+            
+            # 3. 處理文字輸入框
+            tx_key = f"{key_prefix}_tx_{i}"
+            if tx_key not in st.session_state: st.session_state[tx_key] = line['text']
+            # 移除 value，完全交給 key 控制
+            ntx = col_text.text_input("族語", key=tx_key, label_visibility="collapsed")
+            
+            zh_key = f"{key_prefix}_zh_{i}"
+            if zh_key not in st.session_state: st.session_state[zh_key] = line.get('zh', '')
+            nzh = col_zh.text_input("中文", key=zh_key, label_visibility="collapsed")
+            
+            # 刪除按鈕
             if col_del.button("🗑️", key=f"{key_prefix}_dl_{i}"):
                 st.session_state['dialogue_list'].pop(i)
                 st.rerun()
+            
+            # 4. 將介面上的最新值回寫到資料清單
             st.session_state['dialogue_list'][i].update({'tribe': nt, 'speaker': ns, 'text': ntx, 'zh': nzh})
 
     c_add, c_clr = st.columns([4, 1])
