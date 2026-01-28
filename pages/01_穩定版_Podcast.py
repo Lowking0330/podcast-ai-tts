@@ -252,7 +252,7 @@ with st.sidebar:
     st.success("✅ 系統狀態：正常")
     st.caption("版本: Podcast-Azure | 核心: REST API")
 
-st.title("🎙️ 族語Podcast內容產製程式")
+st.title("🎙️ 族語廣播及Podcast內容產製程式")
 st.markdown("打造您的專屬原住民族語廣播節目，支援 **16族42語**、**雙語教學** 與 **背景混音**。")
 
 if 'dialogue_list' not in st.session_state:
